@@ -215,6 +215,7 @@ async def products_page(
             elif v.stock <= v.low_stock_threshold:
                 status = "low"
             items.append({
+                "variant_id": v.id,
                 "category": v.product.category.name if v.product and v.product.category else "",
                 "product_name": v.product.name if v.product else "",
                 "strength": v.strength,
@@ -486,6 +487,95 @@ async def product_create(
                 stock_after=stock,
                 comment="Ручное создание",
             ))
+
+    await db.commit()
+    return RedirectResponse(f"/products?store_id={store_id}", status_code=303)
+
+
+@app.get("/products/template")
+async def download_template(store_id: int, request: Request, db: AsyncSession = Depends(get_db)):
+    """Скачать шаблон Excel для загрузки товаров"""
+    from openpyxl import Workbook
+    from fastapi.responses import StreamingResponse
+    from io import BytesIO
+
+    user = await get_current_web_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Товары"
+
+    # Заголовки
+    headers = ["Категория", "Название", "Крепость", "Вкус", "Цена", "Остаток"]
+    ws.append(headers)
+
+    # Примеры
+    examples = [
+        ["Жидкости", "Скала 5", "20 мг", "Mango", 650, 10],
+        ["Жидкости", "Скала 5", "20 мг", "Blue Razz", 650, 8],
+        ["Жидкости", "Скала 5", "20 мг", "Watermelon", 650, 12],
+        ["Жидкости", "Рик и Морти 5", "20 мг", "Grape", 700, 5],
+        ["Жидкости", "Рик и Морти 5", "20 мг", "Lemon", 700, 7],
+        ["Одноразки", "Elf Bar 1500", "", "Blue Razz", 890, 25],
+        ["Одноразки", "Elf Bar 1500", "", "Mango", 890, 15],
+        ["Устройства", "Voopoo Drag S", "", "", 3200, 3],
+    ]
+    for row in examples:
+        ws.append(row)
+
+    # Ширина колонок
+    for col in ws.columns:
+        ws.column_dimensions[col[0].column_letter].width = 18
+
+    buffer = BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=cloudvape_template.xlsx"},
+    )
+
+
+@app.post("/products/update-variant")
+async def update_variant(
+    request: Request,
+    variant_id: int = Form(...),
+    store_id: int = Form(...),
+    price: float = Form(...),
+    stock: int = Form(...),
+    db: AsyncSession = Depends(get_db),
+):
+    user = await get_current_web_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+
+    from app.models.product import ProductVariant
+    from app.models.inventory import StockMovement
+    from decimal import Decimal
+
+    variant = await db.get(ProductVariant, variant_id)
+    if not variant:
+        return RedirectResponse(f"/products?store_id={store_id}", status_code=303)
+
+    old_stock = variant.stock
+    variant.price = Decimal(str(price))
+    variant.stock = stock
+
+    if stock != old_stock:
+        db.add(StockMovement(
+            variant_id=variant.id,
+            user_id=user.id,
+            store_id=store_id,
+            movement_type="adjustment",
+            quantity_change=stock - old_stock,
+            stock_before=old_stock,
+            stock_after=stock,
+            comment="Ручное изменение через веб",
+        ))
 
     await db.commit()
     return RedirectResponse(f"/products?store_id={store_id}", status_code=303)
