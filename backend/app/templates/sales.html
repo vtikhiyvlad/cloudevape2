@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Продажи — CloudVape{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-bold mb-6">Продажи сегодня</h1>
+
+<div class="bg-white rounded-xl shadow-sm overflow-hidden">
+    <table class="w-full text-sm">
+        <thead class="bg-gray-50 text-left">
+            <tr>
+                <th class="px-4 py-3 font-medium text-gray-600">№</th>
+                <th class="px-4 py-3 font-medium text-gray-600">Время</th>
+                <th class="px-4 py-3 font-medium text-gray-600">Позиции</th>
+                <th class="px-4 py-3 font-medium text-gray-600">Сумма</th>
+            </tr>
+        </thead>
+        <tbody class="divide-y">
+            {% for sale in sales %}
+            <tr class="hover:bg-gray-50">
+                <td class="px-4 py-3">{{ sale.id }}</td>
+                <td class="px-4 py-3 text-gray-500">{{ sale.created_at.strftime('%H:%M') }}</td>
+                <td class="px-4 py-3">
+                    {% for item in sale.items %}
+                    <div>{{ item.product_name }} {% if item.variant_info %}({{ item.variant_info }}){% endif %} × {{ item.quantity }}</div>
+                    {% endfor %}
+                </td>
+                <td class="px-4 py-3 font-medium">{{ sale.total_amount | int }} ₽</td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="4" class="px-4 py-8 text-center text-gray-400">Продаж пока нет</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

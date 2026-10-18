@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Главная — CloudVape{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-bold mb-6">Главная</h1>
+
+<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+    <div class="bg-white rounded-xl p-6 shadow-sm">
+        <div class="text-sm text-gray-500 mb-1">Магазинов</div>
+        <div class="text-3xl font-bold">{{ stores_count }}</div>
+    </div>
+    <div class="bg-white rounded-xl p-6 shadow-sm">
+        <div class="text-sm text-gray-500 mb-1">Продаж сегодня</div>
+        <div class="text-3xl font-bold">{{ sales_today }}</div>
+    </div>
+    <div class="bg-white rounded-xl p-6 shadow-sm">
+        <div class="text-sm text-gray-500 mb-1">Выручка сегодня</div>
+        <div class="text-3xl font-bold">{{ revenue_today }} ₽</div>
+    </div>
+</div>
+
+<div class="bg-white rounded-xl shadow-sm p-6">
+    <h2 class="font-semibold mb-4">Быстрые действия</h2>
+    <div class="flex flex-wrap gap-3">
+        <a href="/stores" class="bg-slate-900 text-white px-4 py-2 rounded-lg text-sm hover:bg-slate-800">Управление магазинами</a>
+        <a href="/products" class="bg-white border border-gray-300 px-4 py-2 rounded-lg text-sm hover:bg-gray-50">Товары и остатки</a>
+        <a href="/sales" class="bg-white border border-gray-300 px-4 py-2 rounded-lg text-sm hover:bg-gray-50">Продажи</a>
+    </div>
+</div>
+{% endblock %}

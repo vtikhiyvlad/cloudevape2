@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Товары — CloudVape{% endblock %}
+{% block content %}
+<div class="flex justify-between items-center mb-6">
+    <h1 class="text-2xl font-bold">Товары и остатки</h1>
+</div>
+
+<!-- Выбор магазина -->
+<div class="bg-white rounded-xl shadow-sm p-4 mb-6">
+    <form method="get" class="flex gap-3 items-center">
+        <label class="text-sm font-medium">Магазин:</label>
+        <select name="store_id" onchange="this.form.submit()"
+                class="border border-gray-300 rounded-lg px-3 py-2 text-sm">
+            <option value="">— выберите —</option>
+            {% for s in stores %}
+            <option value="{{ s.id }}" {% if store_id == s.id %}selected{% endif %}>{{ s.name }}</option>
+            {% endfor %}
+        </select>
+    </form>
+</div>
+
+{% if store_id %}
+<!-- Загрузка Excel -->
+<div class="bg-white rounded-xl shadow-sm p-6 mb-6">
+    <h2 class="font-semibold mb-3">Загрузить товары из Excel</h2>
+    <p class="text-sm text-gray-500 mb-4">Колонки: Категория | Название | Крепость | Вкус | Цена | Остаток</p>
+    <form method="post" action="/products/import" enctype="multipart/form-data" class="flex gap-3 items-center">
+        <input type="hidden" name="store_id" value="{{ store_id }}">
+        <input type="file" name="file" accept=".xlsx,.xls" required
+               class="text-sm">
+        <button type="submit" class="bg-slate-900 text-white px-4 py-2 rounded-lg text-sm hover:bg-slate-800">
+            Загрузить
+        </button>
+    </form>
+</div>
+
+<!-- Таблица остатков -->
+<div class="bg-white rounded-xl shadow-sm overflow-hidden">
+    <table class="w-full text-sm">
+        <thead class="bg-gray-50 text-left">
+            <tr>
+                <th class="px-4 py-3 font-medium text-gray-600">Категория</th>
+                <th class="px-4 py-3 font-medium text-gray-600">Товар</th>
+                <th class="px-4 py-3 font-medium text-gray-600">Крепость</th>
+                <th class="px-4 py-3 font-medium text-gray-600">Вкус</th>
+                <th class="px-4 py-3 font-medium text-gray-600">Цена</th>
+                <th class="px-4 py-3 font-medium text-gray-600">Остаток</th>
+            </tr>
+        </thead>
+        <tbody class="divide-y">
+            {% for item in items %}
+            <tr class="hover:bg-gray-50">
+                <td class="px-4 py-3 text-gray-500">{{ item.category }}</td>
+                <td class="px-4 py-3 font-medium">{{ item.product_name }}</td>
+                <td class="px-4 py-3">{{ item.strength or '—' }}</td>
+                <td class="px-4 py-3">{{ item.flavor or '—' }}</td>
+                <td class="px-4 py-3">{{ item.price }} ₽</td>
+                <td class="px-4 py-3">
+                    {% if item.status == 'out' %}
+                    <span class="text-red-600 font-medium">{{ item.stock }}</span>
+                    {% elif item.status == 'low' %}
+                    <span class="text-yellow-600 font-medium">{{ item.stock }}</span>
+                    {% else %}
+                    <span class="text-green-600">{{ item.stock }}</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="6" class="px-4 py-8 text-center text-gray-400">Товаров пока нет. Загрузите Excel.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="bg-white rounded-xl shadow-sm p-12 text-center text-gray-400">
+    Выберите магазин, чтобы увидеть товары
+</div>
+{% endif %}
+{% endblock %}
