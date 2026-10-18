@@ -1,0 +1,64 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: cloudvape_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cloudvape
+      POSTGRES_PASSWORD: cloudvape_secret
+      POSTGRES_DB: cloudvape
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cloudvape -d cloudvape"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: cloudvape_backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://cloudvape:cloudvape_secret@db:5432/cloudvape
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      - uploads_data:/app/uploads
+      - ./.env:/app/.env
+
+  bot:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: cloudvape_bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://cloudvape:cloudvape_secret@db:5432/cloudvape
+    command: python -m app.bot.main
+    depends_on:
+      db:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    volumes:
+      - ./backend:/app
+      - ./.env:/app/.env
+
+volumes:
+  postgres_data:
+  uploads_data:

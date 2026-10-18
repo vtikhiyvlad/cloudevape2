@@ -1,0 +1,54 @@
+# CloudVape — деплой на Render
+# Документация: https://render.com/docs/blueprint-spec
+
+services:
+  # === Backend (API + веб) ===
+  - type: web
+    name: cloudvape-api
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: cloudvape-db
+          property: connectionString
+      - key: BOT_TOKEN
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: OWNER_PASSWORD
+        sync: false
+      - key: DEBUG
+        value: "false"
+
+  # === Telegram-бот (фоновый воркер) ===
+  - type: worker
+    name: cloudvape-bot
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    dockerCommand: python -m app.bot.main
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: cloudvape-db
+          property: connectionString
+      - key: BOT_TOKEN
+        sync: false
+      - key: SECRET_KEY
+        fromService:
+          name: cloudvape-api
+          type: web
+          envVarKey: SECRET_KEY
+      - key: DEBUG
+        value: "false"
+
+databases:
+  - name: cloudvape-db
+    plan: free
+    databaseName: cloudvape
+    user: cloudvape
