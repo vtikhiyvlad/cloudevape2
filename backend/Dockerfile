@@ -13,6 +13,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 RUN mkdir -p /app/uploads
+RUN chmod +x /app/start.sh
 
-# Render передаёт порт через переменную PORT
-CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
+# Один контейнер = API + бот
+CMD ["/app/start.sh"]
