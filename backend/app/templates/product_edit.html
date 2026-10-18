@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Добавить товар — CloudVape{% endblock %}
+{% block content %}
+<div class="mb-6">
+    <a href="/products?store_id={{ store_id }}" class="text-sm text-blue-600 hover:underline">← Назад к товарам</a>
+</div>
+
+<h1 class="text-2xl font-bold mb-6">Добавить товар вручную</h1>
+
+<div class="bg-white rounded-xl shadow-sm p-6 max-w-2xl">
+    <form method="post" action="/products/create" class="space-y-5">
+        <input type="hidden" name="store_id" value="{{ store_id }}">
+
+        <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Категория *</label>
+            <div class="flex gap-2">
+                <select name="category_id" class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                    <option value="">— новая категория —</option>
+                    {% for c in categories %}
+                    <option value="{{ c.id }}">{{ c.name }}</option>
+                    {% endfor %}
+                </select>
+                <input type="text" name="new_category" placeholder="Или введите новую"
+                       class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm">
+            </div>
+            <p class="text-xs text-gray-400 mt-1">Выберите существующую или напишите название новой (например «Жидкости»)</p>
+        </div>
+
+        <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Название товара *</label>
+            <input type="text" name="name" required placeholder="Например: Skala 5"
+                   class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+        </div>
+
+        <div class="border-t pt-4">
+            <h3 class="font-medium mb-3">Вариант (крепость / вкус / цена / остаток)</h3>
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="block text-xs text-gray-500 mb-1">Крепость</label>
+                    <input type="text" name="strength" placeholder="3 мг / 6 мг / 20 мг"
+                           class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                </div>
+                <div>
+                    <label class="block text-xs text-gray-500 mb-1">Вкус</label>
+                    <input type="text" name="flavor" placeholder="Mango / Blue Razz"
+                           class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                </div>
+                <div>
+                    <label class="block text-xs text-gray-500 mb-1">Цена (₽) *</label>
+                    <input type="number" name="price" required min="0" step="1" placeholder="650"
+                           class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                </div>
+                <div>
+                    <label class="block text-xs text-gray-500 mb-1">Остаток *</label>
+                    <input type="number" name="stock" required min="0" step="1" value="0"
+                           class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                </div>
+            </div>
+        </div>
+
+        <button type="submit" class="bg-slate-900 text-white px-6 py-2.5 rounded-lg hover:bg-slate-800">
+            Сохранить
+        </button>
+    </form>
+</div>
+
+<div class="mt-6 bg-blue-50 border border-blue-100 rounded-xl p-4 text-sm text-blue-800 max-w-2xl">
+    <b>Как это работает:</b><br>
+    Категория = «Жидкости»<br>
+    Товар = «Skala 5»<br>
+    Вариант = крепость + вкус + цена + остаток<br><br>
+    Можно добавить несколько вариантов одного товара (разные вкусы/крепости) — просто создайте товар с тем же названием ещё раз с другим вкусом.
+</div>
+{% endblock %}

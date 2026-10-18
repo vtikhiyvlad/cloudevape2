@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Продавцы — CloudVape{% endblock %}
+{% block content %}
+<div class="flex justify-between items-center mb-6">
+    <h1 class="text-2xl font-bold">Продавцы</h1>
+</div>
+
+<div class="bg-white rounded-xl shadow-sm p-6 mb-6">
+    <h2 class="font-semibold mb-4">Привязать продавца к магазину</h2>
+    <p class="text-sm text-gray-500 mb-4">
+        Продавец должен сначала написать боту /start. После этого он появится в списке ниже.
+    </p>
+    <form method="post" action="/sellers/assign" class="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <select name="user_id" required class="border border-gray-300 rounded-lg px-3 py-2 text-sm">
+            <option value="">— выберите продавца —</option>
+            {% for u in available_users %}
+            <option value="{{ u.id }}">{{ u.full_name or u.username or u.telegram_id }} (tg: {{ u.telegram_id }})</option>
+            {% endfor %}
+        </select>
+        <select name="store_id" required class="border border-gray-300 rounded-lg px-3 py-2 text-sm">
+            <option value="">— выберите магазин —</option>
+            {% for s in stores %}
+            <option value="{{ s.id }}">{{ s.name }}</option>
+            {% endfor %}
+        </select>
+        <button type="submit" class="bg-slate-900 text-white px-4 py-2 rounded-lg text-sm hover:bg-slate-800">
+            Привязать
+        </button>
+    </form>
+</div>
+
+<div class="bg-white rounded-xl shadow-sm overflow-hidden">
+    <table class="w-full text-sm">
+        <thead class="bg-gray-50 text-left">
+            <tr>
+                <th class="px-4 py-3 font-medium text-gray-600">Имя</th>
+                <th class="px-4 py-3 font-medium text-gray-600">Telegram ID</th>
+                <th class="px-4 py-3 font-medium text-gray-600">Магазин</th>
+                <th class="px-4 py-3 font-medium text-gray-600">Роль</th>
+                <th class="px-4 py-3 font-medium text-gray-600">Действие</th>
+            </tr>
+        </thead>
+        <tbody class="divide-y">
+            {% for link in links %}
+            <tr class="hover:bg-gray-50">
+                <td class="px-4 py-3 font-medium">{{ link.user.full_name or link.user.username or '—' }}</td>
+                <td class="px-4 py-3 text-gray-500">{{ link.user.telegram_id }}</td>
+                <td class="px-4 py-3">{{ link.store.name }}</td>
+                <td class="px-4 py-3">{{ link.role }}</td>
+                <td class="px-4 py-3">
+                    <form method="post" action="/sellers/remove" class="inline">
+                        <input type="hidden" name="link_id" value="{{ link.id }}">
+                        <button type="submit" class="text-red-600 hover:underline text-sm">Отвязать</button>
+                    </form>
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="5" class="px-4 py-8 text-center text-gray-400">Продавцы ещё не привязаны</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}
