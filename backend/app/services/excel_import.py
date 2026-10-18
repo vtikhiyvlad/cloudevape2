@@ -17,6 +17,10 @@ EXPECTED_COLUMNS = {
     "название": "name",
     "крепость": "strength",
     "вкус": "flavor",
+    "характеристика 1": "strength",
+    "характеристика 2": "flavor",
+    "хар. 1": "strength",
+    "хар. 2": "flavor",
     "цена": "price",
     "остаток": "stock",
 }

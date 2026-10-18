@@ -20,29 +20,29 @@
                     <option value="{{ c.id }}">{{ c.name }}</option>
                     {% endfor %}
                 </select>
-                <input type="text" name="new_category" placeholder="Или введите новую"
+                <input type="text" name="new_category" placeholder="Или новая (Жидкости, Одноразки, Табак...)"
                        class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm">
             </div>
-            <p class="text-xs text-gray-400 mt-1">Выберите существующую или напишите название новой (например «Жидкости»)</p>
         </div>
 
         <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">Название товара *</label>
-            <input type="text" name="name" required placeholder="Например: Skala 5"
+            <input type="text" name="name" required placeholder="Скала 5 / Elf Bar 1500 / Tangiers / Voopoo Drag S"
                    class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
         </div>
 
         <div class="border-t pt-4">
-            <h3 class="font-medium mb-3">Вариант (крепость / вкус / цена / остаток)</h3>
+            <h3 class="font-medium mb-1">Вариант / характеристики</h3>
+            <p class="text-xs text-gray-400 mb-3">Заполняй только то, что нужно. Пустые поля не будут отображаться.</p>
             <div class="grid grid-cols-2 gap-3">
                 <div>
-                    <label class="block text-xs text-gray-500 mb-1">Крепость</label>
-                    <input type="text" name="strength" placeholder="3 мг / 6 мг / 20 мг"
+                    <label class="block text-xs text-gray-500 mb-1">Характеристика 1</label>
+                    <input type="text" name="strength" placeholder="Крепость / Вес / Цвет / Модель..."
                            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
                 </div>
                 <div>
-                    <label class="block text-xs text-gray-500 mb-1">Вкус</label>
-                    <input type="text" name="flavor" placeholder="Mango / Blue Razz"
+                    <label class="block text-xs text-gray-500 mb-1">Характеристика 2</label>
+                    <input type="text" name="flavor" placeholder="Вкус / Аромат / Объём / Фасовка..."
                            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
                 </div>
                 <div>
@@ -64,11 +64,24 @@
     </form>
 </div>
 
-<div class="mt-6 bg-blue-50 border border-blue-100 rounded-xl p-4 text-sm text-blue-800 max-w-2xl">
-    <b>Как это работает:</b><br>
-    Категория = «Жидкости»<br>
-    Товар = «Skala 5»<br>
-    Вариант = крепость + вкус + цена + остаток<br><br>
-    Можно добавить несколько вариантов одного товара (разные вкусы/крепости) — просто создайте товар с тем же названием ещё раз с другим вкусом.
+<div class="mt-6 bg-slate-50 border border-slate-200 rounded-xl p-5 text-sm text-slate-700 max-w-2xl space-y-3">
+    <b>Примеры для разных товаров:</b>
+    <div class="grid grid-cols-1 gap-2 text-xs">
+        <div class="bg-white rounded-lg p-3 border">
+            <b>Жидкость:</b> Категория «Жидкости» → Скала 5 → Хар.1: 20 мг → Хар.2: Mango
+        </div>
+        <div class="bg-white rounded-lg p-3 border">
+            <b>Одноразка:</b> Категория «Одноразки» → Elf Bar 1500 → Хар.1: пусто → Хар.2: Blue Razz
+        </div>
+        <div class="bg-white rounded-lg p-3 border">
+            <b>Табак для кальяна:</b> Категория «Табак» → Tangiers → Хар.1: 250г → Хар.2: Cane Mint
+        </div>
+        <div class="bg-white rounded-lg p-3 border">
+            <b>Устройство:</b> Категория «Устройства» → Voopoo Drag S → оба поля пустые
+        </div>
+        <div class="bg-white rounded-lg p-3 border">
+            <b>Жевательный табак:</b> Категория «Снюс» → Lyft → Хар.1: Strong → Хар.2: Ice Cool
+        </div>
+    </div>
 </div>
 {% endblock %}
