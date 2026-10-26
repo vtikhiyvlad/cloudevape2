@@ -8,12 +8,16 @@ engine = create_async_engine(
     settings.DATABASE_URL,
     echo=settings.DEBUG,
     pool_pre_ping=True,
+    pool_size=3,
+    max_overflow=2,
+    pool_recycle=300,
 )
 
 AsyncSessionLocal = async_sessionmaker(
     engine,
     class_=AsyncSession,
     expire_on_commit=False,
+    autoflush=False,
 )
 
 
@@ -22,6 +26,7 @@ class Base(DeclarativeBase):
 
 
 async def get_db():
+    """Сессия на запрос. Commit только если не было исключения."""
     async with AsyncSessionLocal() as session:
         try:
             yield session

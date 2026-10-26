@@ -83,7 +83,14 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="CloudVape", version="0.1.0", lifespan=lifespan)
 
-app.add_middleware(SessionMiddleware, secret_key=settings.SECRET_KEY)
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=settings.SECRET_KEY,
+    session_cookie="cloudvape_session",
+    max_age=60 * 60 * 12,  # 12 часов
+    same_site="lax",
+    https_only=False,  # True когда будет свой HTTPS-домен
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -94,6 +101,16 @@ app.add_middleware(
 
 os.makedirs("uploads", exist_ok=True)
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(self), microphone=()"
+    return response
 
 app.include_router(auth.router, prefix="/api")
 app.include_router(stores.router, prefix="/api")
@@ -121,7 +138,13 @@ def login_required(user: User | None):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    db_ok = True
+    try:
+        async with AsyncSessionLocal() as session:
+            await session.execute(select(1))
+    except Exception:
+        db_ok = False
+    return {"status": "ok" if db_ok else "degraded", "database": db_ok}
 
 
 @app.get("/", response_class=HTMLResponse)
