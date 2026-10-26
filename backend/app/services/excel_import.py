@@ -23,6 +23,9 @@ EXPECTED_COLUMNS = {
     "хар. 2": "flavor",
     "цена": "price",
     "остаток": "stock",
+    "штрихкод": "barcode",
+    "штрих-код": "barcode",
+    "barcode": "barcode",
 }
 
 
@@ -92,6 +95,7 @@ async def import_products_from_excel(
             flavor = get("flavor") or None
             price_raw = get("price")
             stock_raw = get("stock")
+            barcode_raw = get("barcode")
 
             if not category_name or not product_name:
                 continue
@@ -155,6 +159,8 @@ async def import_products_from_excel(
             if variant:
                 old_stock = variant.stock
                 variant.price = price
+                if barcode_raw:
+                    variant.barcode = barcode_raw.strip()
                 if stock_raw is not None:
                     # Обновляем остаток только если явно указан
                     variant.stock = stock
@@ -178,6 +184,7 @@ async def import_products_from_excel(
                     flavor=flavor,
                     price=price,
                     stock=stock,
+                    barcode=(barcode_raw.strip() if barcode_raw else None),
                 )
                 session.add(variant)
                 await session.flush()

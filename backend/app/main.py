@@ -7,6 +7,8 @@ from fastapi.templating import Jinja2Templates
 from fastapi.responses import RedirectResponse, HTMLResponse
 from starlette.middleware.sessions import SessionMiddleware
 import os
+import asyncio
+import httpx
 
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,12 +45,37 @@ async def create_owner_if_not_exists():
             print("✅ Создан владелец системы (логин: owner)")
 
 
+
+async def keep_alive_loop():
+    """Пинг своего /health, чтобы реже засыпать (нужен внешний URL)."""
+    url = os.environ.get("KEEP_ALIVE_URL") or os.environ.get("RENDER_EXTERNAL_URL")
+    if not url:
+        print("ℹ️ KEEP_ALIVE_URL не задан — автопинг выключен")
+        return
+    health = url.rstrip("/") + "/health"
+    print(f"💓 Keep-alive включён: {health}")
+    while True:
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                r = await client.get(health)
+                print(f"💓 ping {r.status_code}")
+        except Exception as e:
+            print(f"💓 ping error: {e}")
+        await asyncio.sleep(600)  # каждые 10 минут
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        try:
+            from sqlalchemy import text as sql_text
+            await conn.execute(sql_text("ALTER TABLE product_variants ADD COLUMN IF NOT EXISTS barcode VARCHAR(64)"))
+        except Exception as e:
+            print("barcode migrate:", e)
     await create_owner_if_not_exists()
     print("🚀 CloudVape backend запущен")
+    asyncio.create_task(keep_alive_loop())
     yield
     await engine.dispose()
 
@@ -482,6 +509,7 @@ async def product_create(
     flavor: str = Form(""),
     price: float = Form(...),
     stock: int = Form(0),
+    barcode: str = Form(""),
     db: AsyncSession = Depends(get_db),
 ):
     user = await get_current_web_user(request, db)
@@ -554,6 +582,7 @@ async def product_create(
             flavor=flavor_val,
             price=Decimal(str(price)),
             stock=stock,
+            barcode=(barcode.strip() or None),
         )
         db.add(variant)
         await db.flush()
@@ -589,7 +618,7 @@ async def download_template(store_id: int, request: Request, db: AsyncSession = 
     ws.title = "Товары"
 
     # Заголовки
-    headers = ["Категория", "Название", "Характеристика 1", "Характеристика 2", "Цена", "Остаток"]
+    headers = ["Категория", "Название", "Характеристика 1", "Характеристика 2", "Цена", "Остаток", "Штрихкод"]
     ws.append(headers)
 
     # Примеры
@@ -666,12 +695,10 @@ async def update_variant(
 # ========== Seller web POS (/sell) ==========
 
 async def get_seller_store(user: User, db: AsyncSession, preferred_store_id: int | None = None):
-    """Возвращает (store_id, store_name) для продавца или владельца"""
     if preferred_store_id and user.role == "owner":
         store = await db.get(Store, preferred_store_id)
         if store and store.is_active:
             return store.id, store.name
-
     result = await db.execute(
         select(StoreUser, Store)
         .join(Store, Store.id == StoreUser.store_id)
@@ -680,15 +707,23 @@ async def get_seller_store(user: User, db: AsyncSession, preferred_store_id: int
     row = result.first()
     if row:
         return row.StoreUser.store_id, row.Store.name
-
-    # Владелец без привязки — берём первый магазин
     if user.role == "owner":
         r = await db.execute(select(Store).where(Store.is_active == True).order_by(Store.id).limit(1))
         store = r.scalar_one_or_none()
         if store:
             return store.id, store.name
-
     return None, None
+
+
+async def ensure_barcode_column(conn):
+    """Добавляем колонку barcode если её ещё нет"""
+    from sqlalchemy import text as sql_text
+    try:
+        await conn.execute(sql_text(
+            "ALTER TABLE product_variants ADD COLUMN IF NOT EXISTS barcode VARCHAR(64)"
+        ))
+    except Exception:
+        pass
 
 
 @app.post("/sellers/create")
@@ -703,12 +738,10 @@ async def sellers_create(
     current = await get_current_web_user(request, db)
     if not current or current.role not in ("owner", "admin"):
         return RedirectResponse("/login", status_code=303)
-
     username = username.strip().lower()
     existing = await db.execute(select(User).where(User.username == username))
     if existing.scalar_one_or_none():
         return RedirectResponse("/sellers", status_code=303)
-
     user = User(
         full_name=full_name.strip(),
         username=username,
@@ -718,7 +751,6 @@ async def sellers_create(
     )
     db.add(user)
     await db.flush()
-
     link = StoreUser(user_id=user.id, store_id=store_id, role="seller", is_active=True)
     db.add(link)
     await db.commit()
@@ -728,115 +760,197 @@ async def sellers_create(
 @app.get("/sell", response_class=HTMLResponse)
 async def sell_page(
     request: Request,
-    step: str = "category",
+    q: str | None = None,
     category_id: int | None = None,
-    product_id: int | None = None,
-    variant_id: int | None = None,
-    qty: int | None = None,
-    store_id: int | None = None,
     db: AsyncSession = Depends(get_db),
 ):
     user = await get_current_web_user(request, db)
     if not user:
         return RedirectResponse("/login", status_code=303)
 
-    sid, store_name = await get_seller_store(user, db, preferred_store_id=store_id)
+    success = None
+    error = request.session.pop("flash_error", None)
+    ok = request.query_params.get("ok")
+    check = request.query_params.get("check")
+    if ok and check:
+        success = f"✅ Чек №{check} · {ok} ₽"
+
+    sid, store_name = await get_seller_store(user, db)
     cart = request.session.get("cart") or []
     cart_total = sum(float(i.get("price", 0)) * int(i.get("qty", 0)) for i in cart)
 
+    # сумма смены
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    shift_q = await db.execute(
+        select(func.coalesce(func.sum(Sale.total_amount), 0))
+        .where(Sale.seller_id == user.id, Sale.created_at >= today_start)
+    )
+    shift_total = float(shift_q.scalar() or 0)
+
     if not sid:
         return templates.TemplateResponse("sell.html", {
-            "request": request,
-            "user": user,
-            "store_name": "—",
-            "step": "category",
-            "categories": [],
-            "cart": cart,
-            "cart_total": cart_total,
-            "error": "Нет доступного магазина. Создай магазин в админке и привяжи продавца.",
+            "request": request, "user": user, "store_name": "—",
+            "categories": [], "products": [], "cart": cart, "cart_total": cart_total,
+            "shift_total": shift_total, "q": q or "", "category_id": None,
+            "error": error or "Нет магазина. Создай магазин и привяжи продавца.",
+            "success": success,
         })
 
-    ctx = {
+    # категории
+    cats = (await db.execute(
+        select(Category).where(Category.store_id == sid, Category.is_active == True)
+        .order_by(Category.sort_order, Category.name)
+    )).scalars().all()
+
+    # товары в наличии
+    vq = (
+        select(ProductVariant)
+        .join(Product)
+        .where(Product.store_id == sid, ProductVariant.is_active == True, Product.is_active == True, ProductVariant.stock > 0)
+        .options(selectinload(ProductVariant.product).selectinload(Product.category))
+        .order_by(Product.name)
+        .limit(200)
+    )
+    if category_id:
+        vq = vq.where(Product.category_id == category_id)
+    if q and q.strip():
+        qq = f"%{q.strip()}%"
+        from sqlalchemy import or_
+        vq = vq.where(or_(
+            Product.name.ilike(qq),
+            ProductVariant.flavor.ilike(qq),
+            ProductVariant.strength.ilike(qq),
+            ProductVariant.barcode == q.strip(),
+        ))
+
+    variants = (await db.execute(vq)).scalars().all()
+    products = []
+    for v in variants:
+        products.append({
+            "variant_id": v.id,
+            "product_name": v.product.name if v.product else "?",
+            "strength": v.strength,
+            "flavor": v.flavor,
+            "price": float(v.price),
+            "stock": v.stock,
+            "barcode": v.barcode,
+        })
+
+    # если точный штрихкод — сразу в корзину
+    if q and q.strip() and len(products) == 1 and products[0].get("barcode") == q.strip():
+        item = products[0]
+        cart.append({
+            "variant_id": item["variant_id"],
+            "name": f"{item['product_name']}" + (f" ({item['flavor'] or item['strength'] or ''})" if (item['flavor'] or item['strength']) else ""),
+            "qty": 1,
+            "price": item["price"],
+        })
+        request.session["cart"] = cart
+        return RedirectResponse("/sell", status_code=303)
+
+    return templates.TemplateResponse("sell.html", {
         "request": request,
         "user": user,
-        "store_name": store_name or "—",
-        "step": step or "category",
+        "store_name": store_name,
+        "categories": cats,
+        "products": products,
         "cart": cart,
         "cart_total": cart_total,
-    }
+        "shift_total": shift_total,
+        "q": q or "",
+        "category_id": category_id,
+        "success": success,
+        "error": error,
+    })
 
+
+@app.post("/sell/add")
+async def sell_add_to_cart(
+    request: Request,
+    variant_id: int = Form(...),
+    qty: int = Form(1),
+    db: AsyncSession = Depends(get_db),
+):
+    user = await get_current_web_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    variant = await db.get(ProductVariant, variant_id)
+    if not variant or qty < 1:
+        return RedirectResponse("/sell", status_code=303)
+    await db.refresh(variant, ["product"])
+    parts = [p for p in [variant.strength, variant.flavor] if p]
+    name = variant.product.name if variant.product else "Товар"
+    if parts:
+        name = f"{name} ({' / '.join(parts)})"
+    cart = request.session.get("cart") or []
+    # если уже в корзине — увеличим qty
+    found = False
+    for item in cart:
+        if item["variant_id"] == variant_id:
+            item["qty"] = int(item["qty"]) + int(qty)
+            found = True
+            break
+    if not found:
+        cart.append({"variant_id": variant_id, "name": name, "qty": int(qty), "price": float(variant.price)})
+    request.session["cart"] = cart
+    return RedirectResponse("/sell", status_code=303)
+
+
+@app.post("/sell/cart-qty")
+async def sell_cart_qty(request: Request, index: int = Form(...), action: str = Form(...)):
+    cart = request.session.get("cart") or []
+    if 0 <= index < len(cart):
+        if action == "plus":
+            cart[index]["qty"] = int(cart[index]["qty"]) + 1
+        elif action == "minus":
+            cart[index]["qty"] = int(cart[index]["qty"]) - 1
+            if cart[index]["qty"] <= 0:
+                cart.pop(index)
+    request.session["cart"] = cart
+    return RedirectResponse("/sell", status_code=303)
+
+
+@app.post("/sell/cart-remove")
+async def sell_cart_remove(request: Request, index: int = Form(...)):
+    cart = request.session.get("cart") or []
+    if 0 <= index < len(cart):
+        cart.pop(index)
+    request.session["cart"] = cart
+    return RedirectResponse("/sell", status_code=303)
+
+
+@app.post("/sell/checkout")
+async def sell_checkout(request: Request, db: AsyncSession = Depends(get_db)):
+    user = await get_current_web_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    sid, store_name = await get_seller_store(user, db)
+    cart = request.session.get("cart") or []
+    if not sid or not cart:
+        return RedirectResponse("/sell", status_code=303)
+    from app.services.inventory import create_sale, InsufficientStockError
+    items = [{"variant_id": i["variant_id"], "quantity": int(i["qty"])} for i in cart]
     try:
-        if step == "cart":
-            return templates.TemplateResponse("sell.html", ctx)
-
-        if step in (None, "", "category"):
-            result = await db.execute(
-                select(Category)
-                .where(Category.store_id == sid, Category.is_active == True)
-                .order_by(Category.sort_order, Category.name)
-            )
-            ctx["step"] = "category"
-            ctx["categories"] = result.scalars().all()
-            return templates.TemplateResponse("sell.html", ctx)
-
-        if step == "product" and category_id:
-            result = await db.execute(
-                select(Product)
-                .where(
-                    Product.store_id == sid,
-                    Product.category_id == category_id,
-                    Product.is_active == True,
-                )
-                .options(selectinload(Product.variants))
-                .order_by(Product.name)
-            )
-            products = []
-            for p in result.scalars().all():
-                if any(v.is_active and v.stock > 0 for v in p.variants):
-                    products.append(p)
-            ctx["products"] = products
-            ctx["category_id"] = category_id
-            return templates.TemplateResponse("sell.html", ctx)
-
-        if step == "variant" and product_id:
-            product = await db.get(Product, product_id)
-            result = await db.execute(
-                select(ProductVariant)
-                .where(
-                    ProductVariant.product_id == product_id,
-                    ProductVariant.is_active == True,
-                    ProductVariant.stock > 0,
-                )
-                .order_by(ProductVariant.strength, ProductVariant.flavor)
-            )
-            ctx["variants"] = result.scalars().all()
-            ctx["product_id"] = product_id
-            ctx["product_name"] = product.name if product else ""
-            ctx["category_id"] = product.category_id if product else None
-            return templates.TemplateResponse("sell.html", ctx)
-
-        if step == "qty" and variant_id:
-            variant = await db.get(ProductVariant, variant_id)
-            if not variant or variant.stock <= 0:
-                return RedirectResponse("/sell", status_code=303)
-            await db.refresh(variant, ["product"])
-            ctx["variant_id"] = variant_id
-            ctx["product_id"] = variant.product_id
-            ctx["product_name"] = variant.product.name if variant.product else ""
-            ctx["strength"] = variant.strength
-            ctx["flavor"] = variant.flavor
-            ctx["price"] = float(variant.price)
-            ctx["max_stock"] = variant.stock
-            return templates.TemplateResponse("sell.html", ctx)
-
-        # неизвестный шаг
+        sale = await create_sale(session=db, store_id=sid, seller_id=user.id, items=items)
+        await db.commit()
+        request.session["cart"] = []
+        request.session["last_sale_id"] = sale.id
+        return RedirectResponse(f"/sell?ok={int(sale.total_amount)}&check={sale.id}", status_code=303)
+    except InsufficientStockError as e:
+        await db.rollback()
+        # show error via redirect query is messy — use session flash
+        request.session["flash_error"] = f"Недостаточно «{e.variant_name}». Доступно: {e.available}"
         return RedirectResponse("/sell", status_code=303)
     except Exception as e:
-        print("SELL ERROR:", e)
-        ctx["step"] = "category"
-        ctx["categories"] = []
-        ctx["error"] = f"Ошибка: {e}"
-        return templates.TemplateResponse("sell.html", ctx)
+        await db.rollback()
+        request.session["flash_error"] = str(e)
+        return RedirectResponse("/sell", status_code=303)
+
+
+@app.post("/sell/clear-cart")
+async def sell_clear_cart(request: Request):
+    request.session["cart"] = []
+    return RedirectResponse("/sell", status_code=303)
 
 
 @app.get("/sell/shift", response_class=HTMLResponse)

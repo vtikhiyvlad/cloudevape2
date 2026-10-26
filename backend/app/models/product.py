@@ -65,6 +65,7 @@ class ProductVariant(Base):
     low_stock_threshold: Mapped[int] = mapped_column(Integer, default=3)
 
     sku: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    barcode: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
