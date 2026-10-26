@@ -419,12 +419,14 @@ async def sellers_page(request: Request, db: AsyncSession = Depends(get_db)):
     all_tg_users = users_result.scalars().all()
     available_users = [u for u in all_tg_users if u.id not in linked_user_ids]
 
+    success = request.session.pop("flash_success", None)
     return templates.TemplateResponse("sellers.html", {
         "request": request,
         "user": user,
         "stores": stores_list,
         "links": links,
         "available_users": available_users,
+        "success": success,
     })
 
 
@@ -482,6 +484,39 @@ async def sellers_remove(
 
 
 # ========== Manual product create ==========
+
+
+@app.post("/sellers/set-role")
+async def sellers_set_role(
+    request: Request,
+    link_id: int = Form(...),
+    role: str = Form(...),
+    db: AsyncSession = Depends(get_db),
+):
+    current = await get_current_web_user(request, db)
+    if not current or current.role not in ("owner", "admin"):
+        return RedirectResponse("/login", status_code=303)
+
+    role = role if role in ("seller", "admin", "warehouse") else "seller"
+    result = await db.execute(select(StoreUser).where(StoreUser.id == link_id))
+    link = result.scalar_one_or_none()
+    if not link:
+        return RedirectResponse("/sellers", status_code=303)
+
+    link.role = role
+    u = await db.get(User, link.user_id)
+    if u and u.role != "owner":
+        # глобальная роль для доступа к разделам сайта
+        if role == "warehouse":
+            u.role = "warehouse"
+        elif role == "admin":
+            u.role = "admin"
+        else:
+            u.role = "seller"
+    await db.commit()
+    request.session["flash_success"] = "Роль обновлена"
+    return RedirectResponse("/sellers", status_code=303)
+
 
 @app.get("/products/add", response_class=HTMLResponse)
 async def product_add_page(

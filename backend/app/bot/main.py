@@ -1,6 +1,7 @@
 """
 CloudVape Telegram Bot
-Запуск: python -m app.bot.main
+Только авторизация продавцов. Отчёты админу уходят через API (notify).
+Продажи — только в веб-кассе.
 """
 import asyncio
 import logging
@@ -10,7 +11,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
 from app.core.config import get_settings
-from app.bot.handlers import start, sales, stock
+from app.bot.handlers import start
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -28,12 +29,9 @@ async def main():
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     dp = Dispatcher(storage=MemoryStorage())
-
     dp.include_router(start.router)
-    dp.include_router(sales.router)
-    dp.include_router(stock.router)
 
-    logger.info("🤖 CloudVape бот запускается...")
+    logger.info("🤖 CloudVape бот (авторизация) запускается...")
     await dp.start_polling(bot)
 
 

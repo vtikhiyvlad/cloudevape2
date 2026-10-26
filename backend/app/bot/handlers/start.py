@@ -1,5 +1,5 @@
 from aiogram import Router, F
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.filters import CommandStart, Command
 from sqlalchemy import select
 from datetime import datetime, timezone, timedelta
@@ -13,15 +13,14 @@ from app.models.login_code import LoginCode
 router = Router()
 
 
-def main_keyboard(has_store: bool = False):
-    rows = [
-        [KeyboardButton(text="🛒 Продажа")],
-        [KeyboardButton(text="📦 Остатки"), KeyboardButton(text="📊 Моя смена")],
-        [KeyboardButton(text="🌐 Открыть веб-кассу")],
-    ]
-    if has_store:
-        rows.append([KeyboardButton(text="📋 Инвентаризация")])
-    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
+def main_keyboard():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="🌐 Войти на сайт")],
+            [KeyboardButton(text="ℹ️ Помощь")],
+        ],
+        resize_keyboard=True,
+    )
 
 
 @router.message(CommandStart())
@@ -46,11 +45,12 @@ async def cmd_start(message: Message):
             await session.commit()
             await message.answer(
                 f"Привет, {full_name}!\n\n"
-                "Регистрация через Telegram прошла.\n"
-                "Администратор должен привязать тебя к магазину.\n\n"
-                f"Твой ID: <code>{tg_id}</code>\n"
-                "Передай его админу для привязки.",
-                reply_markup=main_keyboard(False),
+                "Ты зарегистрирован в CloudVape.\n"
+                f"Твой Telegram ID: <code>{tg_id}</code>\n\n"
+                "Передай ID администратору — он привяжет тебя к магазину.\n\n"
+                "Продажи и инвентаризация — только на <b>сайте</b>.\n"
+                "Кнопка «🌐 Войти на сайт» выдаёт код для входа.",
+                reply_markup=main_keyboard(),
             )
             return
 
@@ -68,10 +68,10 @@ async def cmd_start(message: Message):
         if not links:
             await message.answer(
                 f"Привет, {user.full_name}!\n\n"
-                "Ты ещё не привязан к магазину.\n"
-                f"Твой Telegram ID: <code>{tg_id}</code>\n"
-                "Передай его администратору.",
-                reply_markup=main_keyboard(False),
+                f"Telegram ID: <code>{tg_id}</code>\n"
+                "Админ ещё не привязал тебя к магазину.\n\n"
+                "После привязки — «🌐 Войти на сайт».",
+                reply_markup=main_keyboard(),
             )
             return
 
@@ -79,25 +79,23 @@ async def cmd_start(message: Message):
         await message.answer(
             f"Привет, <b>{user.full_name}</b>!\n"
             f"Магазин: <b>{store_names}</b>\n\n"
-            "Продажи удобнее в веб-кассе с телефона (камера для штрихкодов).\n"
-            "Нажми «🌐 Открыть веб-кассу».",
-            reply_markup=main_keyboard(True),
+            "Продажи и инвентаризация — на сайте.\n"
+            "Нажми «🌐 Войти на сайт» → код → веб-касса.",
+            reply_markup=main_keyboard(),
         )
 
 
-@router.message(F.text == "🌐 Открыть веб-кассу")
+@router.message(F.text == "🌐 Войти на сайт")
 @router.message(Command("web"))
 async def web_login_code(message: Message):
-    """Безопасный одноразовый код + подсказка открыть сайт"""
     tg_id = message.from_user.id
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(User).where(User.telegram_id == tg_id))
         user = result.scalar_one_or_none()
         if not user:
-            await message.answer("Сначала /start")
+            await message.answer("Сначала нажми /start")
             return
 
-        # Антиспам: не чаще 1 кода в 30 сек
         recent = await session.execute(
             select(LoginCode)
             .where(LoginCode.user_id == user.id)
@@ -117,33 +115,46 @@ async def web_login_code(message: Message):
         for c in old.scalars().all():
             c.used = True
 
-        # 8-значный криптостойкий код
         code = f"{secrets.randbelow(100_000_000):08d}"
-        lc = LoginCode(
+        session.add(LoginCode(
             user_id=user.id,
             code=code,
             expires_at=datetime.now(timezone.utc) + timedelta(minutes=3),
             used=False,
-        )
-        session.add(lc)
+        ))
         await session.commit()
 
     await message.answer(
-        f"🔐 <b>Вход в веб-кассу</b>\n\n"
-        f"Код: <code>{code}</code>\n"
+        f"🔐 <b>Код входа на сайт</b>\n\n"
+        f"<code>{code}</code>\n\n"
         f"Действует <b>3 минуты</b>, один раз.\n\n"
         f"1. Открой сайт CloudVape\n"
         f"2. «Войти через Telegram»\n"
         f"3. Введи код\n\n"
-        f"Никому не пересылай код."
+        f"Никому не пересылай."
     )
 
 
-@router.message(F.text == "📋 Инвентаризация")
-async def inventory_hint(message: Message):
+@router.message(F.text == "ℹ️ Помощь")
+@router.message(Command("help"))
+async def help_cmd(message: Message):
     await message.answer(
-        "Инвентаризацию удобнее проходить в веб-версии с камерой.\n"
-        "Нажми «🌐 Открыть веб-кассу», войди по коду,\n"
-        "затем открой раздел инвентаризации на сайте.\n\n"
-        "(Раздел /inventory — скоро в меню после входа.)"
+        "<b>CloudVape — бот</b>\n\n"
+        "• Регистрация продавца\n"
+        "• Код входа на сайт\n"
+        "• Админу сюда приходят отчёты\n\n"
+        "Продажи и инвентаризация — только в веб-версии.\n\n"
+        "/start — регистрация\n"
+        "/web — код входа"
+    )
+
+
+@router.message(F.text.in_({
+    "🛒 Продажа", "📦 Остатки", "📊 Моя смена", "↩️ Возврат",
+    "📋 Инвентаризация", "🌐 Открыть веб-кассу",
+}))
+async def removed_features(message: Message):
+    await message.answer(
+        "Продажи перенесены на сайт.\n"
+        "Нажми «🌐 Войти на сайт»."
     )
