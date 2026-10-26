@@ -19,9 +19,13 @@
             <a href="/sellers" class="text-gray-300 hover:text-white text-sm">Продавцы</a>
             <a href="/sales" class="text-gray-300 hover:text-white text-sm">Продажи</a>
             <a href="/sell" class="text-gray-300 hover:text-white text-sm">Касса</a>
+            <a href="/inventory" class="text-gray-300 hover:text-white text-sm">Инвентаризации</a>
+            <a href="/inventory/my" class="text-gray-300 hover:text-white text-sm">Мой учёт</a>
+            <a href="/warehouse" class="text-gray-300 hover:text-white text-sm">Склады</a>
         </div>
         <div class="flex items-center gap-4 text-sm">
             <span class="text-gray-400">{{ user.full_name or user.username }}</span>
+            <a href="/settings" class="text-gray-300 hover:text-white text-sm">Настройки</a>
             <a href="/logout" class="text-red-400 hover:text-red-300">Выйти</a>
         </div>
     </nav>

@@ -17,7 +17,7 @@ from sqlalchemy.orm import selectinload
 from app.core.database import engine, Base, AsyncSessionLocal, get_db
 from app.core.config import get_settings
 from app.core.security import get_password_hash, verify_password
-from app.models import User, Store, Sale, LoginCode
+from app.models import User, Store, Sale, LoginCode, InventoryTask, InventoryCount, InventoryLine
 from app.models.store import StoreUser
 from app.models.product import Category
 from app.models.product import Product, ProductVariant
@@ -71,6 +71,7 @@ async def lifespan(app: FastAPI):
         try:
             from sqlalchemy import text as sql_text
             await conn.execute(sql_text("ALTER TABLE product_variants ADD COLUMN IF NOT EXISTS barcode VARCHAR(64)"))
+            await conn.execute(sql_text("ALTER TABLE inventory_counts ADD COLUMN IF NOT EXISTS applied BOOLEAN DEFAULT FALSE"))
         except Exception as e:
             print("barcode migrate:", e)
     await create_owner_if_not_exists()
@@ -432,6 +433,7 @@ async def sellers_assign(
     request: Request,
     user_id: int = Form(...),
     store_id: int = Form(...),
+    role: str = Form("seller"),
     db: AsyncSession = Depends(get_db),
 ):
     current = await get_current_web_user(request, db)
@@ -447,7 +449,14 @@ async def sellers_assign(
     if existing.scalar_one_or_none():
         return RedirectResponse("/sellers", status_code=303)
 
-    link = StoreUser(user_id=user_id, store_id=store_id, role="seller", is_active=True)
+    role = role if role in ("seller", "admin", "warehouse") else "seller"
+    # warehouse видит все склады — глобальная роль на User
+    u = await db.get(User, user_id)
+    if u and role == "warehouse":
+        u.role = "warehouse"
+    elif u and role == "admin":
+        u.role = "admin"
+    link = StoreUser(user_id=user_id, store_id=store_id, role=role, is_active=True)
     db.add(link)
     await db.commit()
     return RedirectResponse("/sellers", status_code=303)
@@ -935,6 +944,19 @@ async def sell_checkout(request: Request, db: AsyncSession = Depends(get_db)):
         await db.commit()
         request.session["cart"] = []
         request.session["last_sale_id"] = sale.id
+        # low stock alerts
+        try:
+            from app.services.notify import notify_low_stock
+            owners = (await db.execute(select(User).where(User.role == "owner", User.telegram_id.isnot(None)))).scalars().all()
+            for it in items:
+                v = await db.get(ProductVariant, it["variant_id"])
+                if v and v.stock <= v.low_stock_threshold:
+                    await db.refresh(v, ["product"])
+                    label = (v.product.name if v.product else "") + " " + " ".join(filter(None, [v.strength, v.flavor]))
+                    for o in owners:
+                        await notify_low_stock(o.telegram_id, store_name or "", label.strip(), v.stock)
+        except Exception as ex:
+            print("low stock notify:", ex)
         return RedirectResponse(f"/sell?ok={int(sale.total_amount)}&check={sale.id}", status_code=303)
     except InsufficientStockError as e:
         await db.rollback()
@@ -975,3 +997,473 @@ async def sell_shift(request: Request, db: AsyncSession = Depends(get_db)):
         "count": len(sales_list),
         "total": total,
     })
+
+
+
+@app.get("/inventory", response_class=HTMLResponse)
+async def inventory_admin_page(request: Request, db: AsyncSession = Depends(get_db)):
+    user = await get_current_web_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    if user.role not in ("owner", "admin"):
+        return RedirectResponse("/inventory/my", status_code=303)
+
+    from app.models.inventory_task import InventoryTask, InventoryCount, InventoryLine
+    from app.models.product import Category
+
+    stores = (await db.execute(select(Store).where(Store.is_active == True).order_by(Store.name))).scalars().all()
+    store_map = {s.id: s.name for s in stores}
+
+    all_cats = (await db.execute(select(Category).where(Category.is_active == True).order_by(Category.name))).scalars().all()
+    cat_map = {c.id: c.name for c in all_cats}
+    all_categories = [type("C", (), {"id": c.id, "name": c.name, "store_name": store_map.get(c.store_id, "")})() for c in all_cats]
+
+    def cats_label(task):
+        if not task.category_ids:
+            return "все группы"
+        ids = [int(x) for x in task.category_ids.split(",") if x.strip().isdigit()]
+        names = [cat_map[i] for i in ids if i in cat_map]
+        return ", ".join(names) if names else "все группы"
+
+    tasks = (await db.execute(select(InventoryTask).order_by(InventoryTask.created_at.desc()).limit(30))).scalars().all()
+    for task in tasks:
+        task.store_name = store_map.get(task.store_id, "—")
+        task.cats_label = cats_label(task)
+
+    # history of completed counts
+    counts = (await db.execute(
+        select(InventoryCount)
+        .where(InventoryCount.status == "done")
+        .order_by(InventoryCount.finished_at.desc().nullslast(), InventoryCount.id.desc())
+        .limit(50)
+    )).scalars().all()
+
+    history = []
+    for c in counts:
+        await db.refresh(c, ["lines"])
+        task = await db.get(InventoryTask, c.task_id)
+        seller = await db.get(User, c.user_id)
+        diff_count = sum(1 for L in c.lines if L.fact_stock is not None and L.fact_stock != L.system_stock)
+        history.append(type("H", (), {
+            "id": c.id,
+            "finished_at": c.finished_at,
+            "count_date": c.count_date,
+            "period": f"{task.date_from.strftime('%d.%m.%y')}–{task.date_to.strftime('%d.%m.%y')}" if task else "—",
+            "store_name": store_map.get(c.store_id, "—"),
+            "cats_label": cats_label(task) if task else "—",
+            "seller_name": (seller.full_name or seller.username) if seller else "—",
+            "diff_count": diff_count,
+        })())
+
+    success = request.session.pop("flash_success", None)
+    return templates.TemplateResponse("inventory_admin.html", {
+        "request": request, "user": user, "stores": stores,
+        "tasks": tasks, "all_categories": all_categories, "history": history,
+        "success": success,
+    })
+
+
+@app.post("/inventory/create")
+async def inventory_create(
+    request: Request,
+    title: str = Form("Инвентаризация"),
+    store_id: int = Form(...),
+    date_from: str = Form(...),
+    date_to: str = Form(...),
+    db: AsyncSession = Depends(get_db),
+):
+    user = await get_current_web_user(request, db)
+    if not user or user.role not in ("owner", "admin"):
+        return RedirectResponse("/login", status_code=303)
+
+    from app.models.inventory_task import InventoryTask
+    from datetime import date as date_cls
+
+    form = await request.form()
+    cat_ids = form.getlist("category_ids")
+    cat_str = ",".join(cat_ids) if cat_ids else None
+
+    task = InventoryTask(
+        store_id=store_id,
+        title=title.strip() or "Инвентаризация",
+        date_from=date_cls.fromisoformat(date_from),
+        date_to=date_cls.fromisoformat(date_to),
+        category_ids=cat_str,
+        created_by=user.id,
+        is_active=True,
+    )
+    db.add(task)
+    await db.commit()
+    return RedirectResponse("/inventory", status_code=303)
+
+
+@app.get("/inventory/report/{count_id}", response_class=HTMLResponse)
+async def inventory_report(request: Request, count_id: int, db: AsyncSession = Depends(get_db)):
+    user = await get_current_web_user(request, db)
+    if not user or user.role not in ("owner", "admin"):
+        return RedirectResponse("/login", status_code=303)
+
+    from app.models.inventory_task import InventoryCount, InventoryTask
+    from app.models.product import Category
+
+    count = await db.get(InventoryCount, count_id)
+    if not count:
+        return RedirectResponse("/inventory", status_code=303)
+    await db.refresh(count, ["lines"])
+    task = await db.get(InventoryTask, count.task_id)
+    store = await db.get(Store, count.store_id)
+    seller = await db.get(User, count.user_id)
+
+    cats_label = "все группы"
+    period = "—"
+    if task:
+        period = f"{task.date_from.strftime('%d.%m.%y')}–{task.date_to.strftime('%d.%m.%y')}"
+        if task.category_ids:
+            ids = [int(x) for x in task.category_ids.split(",") if x.strip().isdigit()]
+            if ids:
+                cr = await db.execute(select(Category).where(Category.id.in_(ids)))
+                cats_label = ", ".join(c.name for c in cr.scalars().all()) or cats_label
+
+    diffs = [L for L in count.lines if L.fact_stock is not None and L.fact_stock != L.system_stock]
+    success = request.session.pop("flash_success", None)
+
+    return templates.TemplateResponse("inventory_report.html", {
+        "request": request, "user": user, "count": count,
+        "period": period, "store_name": store.name if store else "—",
+        "cats_label": cats_label,
+        "seller_name": (seller.full_name or seller.username) if seller else "—",
+        "diffs": diffs, "success": success,
+    })
+
+
+@app.post("/inventory/apply/{count_id}")
+async def inventory_apply(request: Request, count_id: int, db: AsyncSession = Depends(get_db)):
+    """Только owner/admin применяет остатки по факту"""
+    user = await get_current_web_user(request, db)
+    if not user or user.role not in ("owner", "admin"):
+        return RedirectResponse("/login", status_code=303)
+
+    from app.models.inventory_task import InventoryCount
+    from app.models.inventory import StockMovement
+
+    count = await db.get(InventoryCount, count_id)
+    if not count or count.status != "done":
+        return RedirectResponse("/inventory", status_code=303)
+    if getattr(count, "applied", False):
+        request.session["flash_success"] = "Уже применено ранее"
+        return RedirectResponse(f"/inventory/report/{count_id}", status_code=303)
+
+    await db.refresh(count, ["lines"])
+    for line in count.lines:
+        if line.fact_stock is None:
+            continue
+        variant = await db.get(ProductVariant, line.variant_id)
+        if not variant:
+            continue
+        old = variant.stock
+        if line.fact_stock == old:
+            continue
+        variant.stock = line.fact_stock
+        db.add(StockMovement(
+            variant_id=variant.id,
+            user_id=user.id,
+            store_id=count.store_id,
+            movement_type="inventory",
+            quantity_change=line.fact_stock - old,
+            stock_before=old,
+            stock_after=line.fact_stock,
+            comment=f"Применение инвентаризации #{count.id} админом",
+        ))
+    count.applied = True
+    await db.commit()
+    request.session["flash_success"] = "Остатки обновлены по факту инвентаризации"
+    return RedirectResponse(f"/inventory/report/{count_id}", status_code=303)
+
+
+
+@app.get("/warehouse", response_class=HTMLResponse)
+async def warehouse_page(
+    request: Request,
+    store_id: int | None = None,
+    q: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    user = await get_current_web_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    if user.role not in ("owner", "admin", "warehouse"):
+        return RedirectResponse("/", status_code=303)
+
+    stores = (await db.execute(select(Store).where(Store.is_active == True).order_by(Store.name))).scalars().all()
+    store_map = {s.id: s.name for s in stores}
+
+    vq = (
+        select(ProductVariant)
+        .join(Product)
+        .where(ProductVariant.is_active == True, Product.is_active == True)
+        .options(selectinload(ProductVariant.product).selectinload(Product.category))
+        .order_by(Product.store_id, Product.name)
+        .limit(500)
+    )
+    if store_id:
+        vq = vq.where(Product.store_id == store_id)
+    if q and q.strip():
+        from sqlalchemy import or_
+        qq = f"%{q.strip()}%"
+        vq = vq.where(or_(
+            Product.name.ilike(qq),
+            ProductVariant.barcode == q.strip(),
+            ProductVariant.flavor.ilike(qq),
+        ))
+
+    variants = (await db.execute(vq)).scalars().all()
+    items = []
+    for v in variants:
+        parts = [p for p in [v.strength, v.flavor] if p]
+        items.append({
+            "store_name": store_map.get(v.product.store_id if v.product else 0, "—"),
+            "category": v.product.category.name if v.product and v.product.category else "",
+            "product_name": v.product.name if v.product else "?",
+            "variant_info": " / ".join(parts) if parts else None,
+            "stock": v.stock,
+            "price": float(v.price),
+        })
+
+    return templates.TemplateResponse("warehouse.html", {
+        "request": request, "user": user, "stores": stores,
+        "store_id": store_id, "q": q or "", "items": items,
+    })
+
+
+# ========== Inventory seller flow ==========
+
+@app.get("/inventory/my", response_class=HTMLResponse)
+async def inventory_seller_page(request: Request, db: AsyncSession = Depends(get_db)):
+    from datetime import date as date_cls
+    from app.models.inventory_task import InventoryTask, InventoryCount, InventoryLine
+
+    user = await get_current_web_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+
+    sid, store_name = await get_seller_store(user, db)
+    today = date_cls.today()
+    error = request.session.pop("flash_error", None)
+    success = request.session.pop("flash_success", None)
+
+    tasks_out = []
+    active_count = None
+
+    if sid:
+        tasks = (await db.execute(
+            select(InventoryTask).where(
+                InventoryTask.store_id == sid,
+                InventoryTask.is_active == True,
+                InventoryTask.date_from <= today,
+                InventoryTask.date_to >= today,
+            ).order_by(InventoryTask.date_from)
+        )).scalars().all()
+
+        for task in tasks:
+            done = (await db.execute(
+                select(InventoryCount).where(
+                    InventoryCount.task_id == task.id,
+                    InventoryCount.user_id == user.id,
+                    InventoryCount.count_date == today,
+                    InventoryCount.status == "done",
+                )
+            )).scalar_one_or_none()
+            in_prog = (await db.execute(
+                select(InventoryCount).where(
+                    InventoryCount.task_id == task.id,
+                    InventoryCount.user_id == user.id,
+                    InventoryCount.count_date == today,
+                    InventoryCount.status == "in_progress",
+                )
+            )).scalar_one_or_none()
+
+            task.store_name = store_name
+            task.done_today = done is not None
+            task.can_start = done is None and in_prog is None
+            tasks_out.append(task)
+
+            if in_prog and not active_count:
+                await db.refresh(in_prog, ["lines"])
+                in_prog.task_title = task.title
+                active_count = in_prog
+
+    return templates.TemplateResponse("inventory_seller.html", {
+        "request": request, "user": user, "tasks": tasks_out,
+        "active_count": active_count, "error": error, "success": success,
+    })
+
+
+@app.post("/inventory/start")
+async def inventory_start(request: Request, task_id: int = Form(...), db: AsyncSession = Depends(get_db)):
+    from datetime import date as date_cls
+    from app.models.inventory_task import InventoryTask, InventoryCount, InventoryLine
+
+    user = await get_current_web_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    sid, _ = await get_seller_store(user, db)
+    task = await db.get(InventoryTask, task_id)
+    today = date_cls.today()
+    if not task or not sid or task.store_id != sid or not task.is_active:
+        request.session["flash_error"] = "Задание недоступно"
+        return RedirectResponse("/inventory/my", status_code=303)
+    if not (task.date_from <= today <= task.date_to):
+        request.session["flash_error"] = "Вне периода инвентаризации"
+        return RedirectResponse("/inventory/my", status_code=303)
+
+    existing = (await db.execute(
+        select(InventoryCount).where(
+            InventoryCount.task_id == task_id,
+            InventoryCount.user_id == user.id,
+            InventoryCount.count_date == today,
+        )
+    )).scalar_one_or_none()
+    if existing:
+        request.session["flash_error"] = "Сегодня уже есть инвентаризация (лимит 1 раз в сутки)"
+        return RedirectResponse("/inventory/my", status_code=303)
+
+    # variants for categories
+    vq = (
+        select(ProductVariant)
+        .join(Product)
+        .where(Product.store_id == sid, Product.is_active == True, ProductVariant.is_active == True)
+        .options(selectinload(ProductVariant.product))
+    )
+    if task.category_ids:
+        ids = [int(x) for x in task.category_ids.split(",") if x.strip().isdigit()]
+        if ids:
+            vq = vq.where(Product.category_id.in_(ids))
+    variants = (await db.execute(vq)).scalars().all()
+
+    count = InventoryCount(
+        task_id=task_id, store_id=sid, user_id=user.id,
+        count_date=today, status="in_progress",
+    )
+    db.add(count)
+    await db.flush()
+    for v in variants:
+        parts = [p for p in [v.strength, v.flavor] if p]
+        db.add(InventoryLine(
+            count_id=count.id,
+            variant_id=v.id,
+            system_stock=v.stock,
+            fact_stock=None,
+            product_name=v.product.name if v.product else "?",
+            variant_info=" / ".join(parts) if parts else None,
+        ))
+    await db.commit()
+    return RedirectResponse("/inventory/my", status_code=303)
+
+
+@app.post("/inventory/submit")
+async def inventory_submit(
+    request: Request,
+    count_id: int = Form(...),
+    action: str = Form("save"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Продавец только фиксирует факт. Остатки НЕ меняются."""
+    from app.models.inventory_task import InventoryCount, InventoryLine, InventoryTask
+    from app.services.notify import send_telegram_message
+
+    user = await get_current_web_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    count = await db.get(InventoryCount, count_id)
+    if not count or count.user_id != user.id or count.status == "done":
+        return RedirectResponse("/inventory/my", status_code=303)
+
+    form = await request.form()
+    await db.refresh(count, ["lines"])
+    for line in count.lines:
+        key = f"fact_{line.id}"
+        if key in form:
+            try:
+                line.fact_stock = int(form[key])
+            except (TypeError, ValueError):
+                pass
+
+    if action == "finish":
+        count.status = "done"
+        count.finished_at = datetime.now(timezone.utc)
+        await db.commit()
+        request.session["flash_success"] = "Инвентаризация сдана. Остатки не изменены — ждёт проверки админа."
+
+        # Отчёт админам/владельцу в Telegram
+        task = await db.get(InventoryTask, count.task_id)
+        store = await db.get(Store, count.store_id)
+        diffs = []
+        for line in count.lines:
+            if line.fact_stock is None:
+                continue
+            if line.fact_stock != line.system_stock:
+                diffs.append(
+                    f"• {line.product_name} {line.variant_info or ''}\n"
+                    f"  план {line.system_stock} → факт {line.fact_stock} (Δ {line.fact_stock - line.system_stock})"
+                )
+        period = ""
+        cats = "все категории"
+        if task:
+            period = f"{task.date_from.strftime('%d.%m.%y')}–{task.date_to.strftime('%d.%m.%y')}"
+            if task.category_ids:
+                from app.models.product import Category
+                ids = [int(x) for x in task.category_ids.split(",") if x.strip().isdigit()]
+                if ids:
+                    cr = await db.execute(select(Category).where(Category.id.in_(ids)))
+                    cats = ", ".join(c.name for c in cr.scalars().all()) or cats
+
+        report = (
+            f"📋 <b>Инвентаризация сдана</b>\n"
+            f"Период: {period}\n"
+            f"Магазин: {store.name if store else '—'}\n"
+            f"Группы: {cats}\n"
+            f"Продавец: {user.full_name or user.username}\n\n"
+        )
+        if diffs:
+            report += f"<b>Расхождения ({len(diffs)}):</b>\n" + "\n".join(diffs[:30])
+            if len(diffs) > 30:
+                report += f"\n… ещё {len(diffs) - 30}"
+        else:
+            report += "✅ Расхождений нет"
+
+        recipients = (await db.execute(
+            select(User).where(User.role.in_(["owner", "admin"]), User.telegram_id.isnot(None))
+        )).scalars().all()
+        for o in recipients:
+            await send_telegram_message(o.telegram_id, report)
+    else:
+        await db.commit()
+        request.session["flash_success"] = "Черновик сохранён"
+    return RedirectResponse("/inventory/my", status_code=303)
+
+
+
+@app.get("/settings", response_class=HTMLResponse)
+async def settings_page(request: Request, db: AsyncSession = Depends(get_db)):
+    user = await get_current_web_user(request, db)
+    if not user or user.role != "owner":
+        return RedirectResponse("/", status_code=303)
+    return templates.TemplateResponse("settings.html", {"request": request, "user": user})
+
+
+@app.post("/settings/telegram")
+async def settings_telegram(
+    request: Request,
+    telegram_id: str = Form(...),
+    db: AsyncSession = Depends(get_db),
+):
+    user = await get_current_web_user(request, db)
+    if not user or user.role != "owner":
+        return RedirectResponse("/", status_code=303)
+    try:
+        tid = int(telegram_id.strip())
+    except ValueError:
+        return RedirectResponse("/settings", status_code=303)
+    user.telegram_id = tid
+    await db.commit()
+    return RedirectResponse("/settings", status_code=303)

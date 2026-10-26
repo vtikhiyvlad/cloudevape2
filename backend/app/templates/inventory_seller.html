@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Инвентаризация — CloudVape{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-bold mb-2">Инвентаризация</h1>
+<p class="text-sm text-gray-500 mb-6">Введите фактическое количество. Остатки на складе не изменятся — отчёт уйдёт админу.</p>
+
+{% if error %}
+<div class="bg-red-100 text-red-800 px-4 py-3 rounded-lg mb-4 text-sm">{{ error }}</div>
+{% endif %}
+{% if success %}
+<div class="bg-green-100 text-green-800 px-4 py-3 rounded-lg mb-4 text-sm">{{ success }}</div>
+{% endif %}
+
+{% if active_count %}
+<div class="bg-white rounded-xl shadow-sm p-4 mb-4">
+    <h2 class="font-semibold mb-1">{{ active_count.task_title }}</h2>
+    <p class="text-sm text-gray-500 mb-4">Сегодня · введите фактические остатки</p>
+    <form method="post" action="/inventory/submit">
+        <input type="hidden" name="count_id" value="{{ active_count.id }}">
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead class="bg-gray-50 text-left">
+                    <tr>
+                        <th class="px-3 py-2">Товар</th>
+                        <th class="px-3 py-2">План (учёт)</th>
+                        <th class="px-3 py-2">Факт</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y">
+                    {% for line in active_count.lines %}
+                    <tr>
+                        <td class="px-3 py-2">
+                            <div class="font-medium">{{ line.product_name }}</div>
+                            <div class="text-xs text-gray-500">{{ line.variant_info or '' }}</div>
+                        </td>
+                        <td class="px-3 py-2 text-gray-500">{{ line.system_stock }}</td>
+                        <td class="px-3 py-2">
+                            <input type="number" name="fact_{{ line.id }}" min="0" step="1"
+                                   value="{{ line.fact_stock if line.fact_stock is not none else line.system_stock }}"
+                                   class="w-20 border rounded-lg px-2 py-1">
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <div class="mt-4 flex gap-2">
+            <button type="submit" name="action" value="save" class="bg-slate-700 text-white px-4 py-2 rounded-lg text-sm">Сохранить черновик</button>
+            <button type="submit" name="action" value="finish" class="bg-green-600 text-white px-4 py-2 rounded-lg text-sm">Сдать отчёт (остатки не меняются)</button>
+        </div>
+    </form>
+</div>
+{% endif %}
+
+<div class="bg-white rounded-xl shadow-sm overflow-hidden">
+    <div class="px-4 py-3 font-semibold border-b">Доступные задания</div>
+    {% for task in tasks %}
+    <div class="px-4 py-3 border-b flex justify-between items-center gap-3">
+        <div>
+            <div class="font-medium">{{ task.title }}</div>
+            <div class="text-xs text-gray-500">{{ task.date_from }} — {{ task.date_to }} · {{ task.store_name }}</div>
+            {% if task.done_today %}<div class="text-xs text-green-600 mt-1">Сегодня уже проведена</div>{% endif %}
+        </div>
+        {% if not task.done_today and task.can_start %}
+        <form method="post" action="/inventory/start">
+            <input type="hidden" name="task_id" value="{{ task.id }}">
+            <button class="bg-slate-900 text-white px-3 py-1.5 rounded-lg text-sm">Начать</button>
+        </form>
+        {% endif %}
+    </div>
+    {% else %}
+    <div class="px-4 py-8 text-center text-gray-400">Нет активных инвентаризаций</div>
+    {% endfor %}
+</div>
+{% endblock %}

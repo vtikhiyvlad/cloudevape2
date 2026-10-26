@@ -12,7 +12,7 @@ class User(Base):
     username: Mapped[str | None] = mapped_column(String(100), nullable=True)
     full_name: Mapped[str] = mapped_column(String(200), default="")
     password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)  # для веб-входа
-    role: Mapped[str] = mapped_column(String(20), default="seller")  # owner / admin / seller
+    role: Mapped[str] = mapped_column(String(20), default="seller")  # owner / admin / seller / warehouse
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

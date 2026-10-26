@@ -14,7 +14,12 @@ from io import BytesIO
 
 EXPECTED_COLUMNS = {
     "категория": "category",
+    "группа": "category",
+    "товарная группа": "category",
     "название": "name",
+    "наименование": "name",
+    "товар": "name",
+    "имя": "name",
     "крепость": "strength",
     "вкус": "flavor",
     "характеристика 1": "strength",
@@ -22,10 +27,16 @@ EXPECTED_COLUMNS = {
     "хар. 1": "strength",
     "хар. 2": "flavor",
     "цена": "price",
+    "цена продажи": "price",
+    "розничная цена": "price",
     "остаток": "stock",
+    "количество": "stock",
+    "кол-во": "stock",
     "штрихкод": "barcode",
     "штрих-код": "barcode",
+    "штрих код": "barcode",
     "barcode": "barcode",
+    "баркод": "barcode",
 }
 
 

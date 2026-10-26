@@ -4,6 +4,7 @@ from app.models.product import Category, Product, ProductVariant
 from app.models.inventory import StockMovement
 from app.models.sale import Sale, SaleItem
 from app.models.login_code import LoginCode
+from app.models.inventory_task import InventoryTask, InventoryCount, InventoryLine
 
 __all__ = [
     "User",
@@ -16,4 +17,7 @@ __all__ = [
     "Sale",
     "SaleItem",
     "LoginCode",
+    "InventoryTask",
+    "InventoryCount",
+    "InventoryLine",
 ]

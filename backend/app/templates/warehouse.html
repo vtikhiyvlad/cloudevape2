@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Склады — CloudVape{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-bold mb-6">Остатки по всем магазинам</h1>
+
+<form method="get" class="bg-white rounded-xl shadow-sm p-4 mb-6 flex flex-wrap gap-3 items-end">
+    <div>
+        <label class="text-xs text-gray-500">Магазин</label>
+        <select name="store_id" class="border rounded-lg px-3 py-2 text-sm">
+            <option value="">Все</option>
+            {% for s in stores %}
+            <option value="{{ s.id }}" {% if store_id == s.id %}selected{% endif %}>{{ s.name }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div>
+        <label class="text-xs text-gray-500">Поиск</label>
+        <input type="search" name="q" value="{{ q or '' }}" class="border rounded-lg px-3 py-2 text-sm" placeholder="Название / штрихкод">
+    </div>
+    <button class="bg-slate-900 text-white px-4 py-2 rounded-lg text-sm">Показать</button>
+</form>
+
+<div class="bg-white rounded-xl shadow-sm overflow-hidden overflow-x-auto">
+    <table class="w-full text-sm">
+        <thead class="bg-gray-50 text-left">
+            <tr>
+                <th class="px-4 py-3">Магазин</th>
+                <th class="px-4 py-3">Категория</th>
+                <th class="px-4 py-3">Товар</th>
+                <th class="px-4 py-3">Вариант</th>
+                <th class="px-4 py-3">Остаток</th>
+                <th class="px-4 py-3">Цена</th>
+            </tr>
+        </thead>
+        <tbody class="divide-y">
+            {% for item in items %}
+            <tr class="hover:bg-gray-50">
+                <td class="px-4 py-2">{{ item.store_name }}</td>
+                <td class="px-4 py-2 text-gray-500">{{ item.category }}</td>
+                <td class="px-4 py-2 font-medium">{{ item.product_name }}</td>
+                <td class="px-4 py-2">{{ item.variant_info or '—' }}</td>
+                <td class="px-4 py-2 {% if item.stock <= 0 %}text-red-600 font-medium{% elif item.stock <= 3 %}text-yellow-600{% else %}text-green-700{% endif %}">{{ item.stock }}</td>
+                <td class="px-4 py-2">{{ item.price | int }} ₽</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6" class="px-4 py-8 text-center text-gray-400">Пусто</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

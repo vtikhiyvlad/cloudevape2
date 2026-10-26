@@ -38,7 +38,7 @@
         Продавец пишет боту /start → появляется здесь → привязываешь к магазину.
         Для веб-кассы потом можно задать пароль.
     </p>
-    <form method="post" action="/sellers/assign" class="grid grid-cols-1 md:grid-cols-3 gap-3">
+    <form method="post" action="/sellers/assign" class="grid grid-cols-1 md:grid-cols-4 gap-3">
         <select name="user_id" required class="border border-gray-300 rounded-lg px-3 py-2 text-sm">
             <option value="">— выберите —</option>
             {% for u in available_users %}
@@ -50,6 +50,11 @@
             {% for s in stores %}
             <option value="{{ s.id }}">{{ s.name }}</option>
             {% endfor %}
+        </select>
+        <select name="role" class="border border-gray-300 rounded-lg px-3 py-2 text-sm">
+            <option value="seller">Продавец</option>
+            <option value="admin">Админ магазина</option>
+            <option value="warehouse">Склад (все магазины)</option>
         </select>
         <button type="submit" class="bg-slate-900 text-white px-4 py-2 rounded-lg text-sm hover:bg-slate-800">
             Привязать

@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Отчёт инвентаризации — CloudVape{% endblock %}
+{% block content %}
+<div class="mb-4">
+    <a href="/inventory" class="text-sm text-blue-600">← К списку</a>
+</div>
+
+<div class="bg-white rounded-xl shadow-sm p-6 mb-6">
+    <h1 class="text-xl font-bold mb-2">Отчёт #{{ count.id }}</h1>
+    <div class="text-sm text-gray-600 space-y-1">
+        <div><b>Период:</b> {{ period }}</div>
+        <div><b>Магазин:</b> {{ store_name }}</div>
+        <div><b>Группы:</b> {{ cats_label }}</div>
+        <div><b>Продавец:</b> {{ seller_name }}</div>
+        <div><b>Сдано:</b> {{ count.finished_at.strftime('%d.%m.%Y %H:%M') if count.finished_at else '—' }}</div>
+    </div>
+</div>
+
+{% if success %}
+<div class="bg-green-100 text-green-800 px-4 py-3 rounded-lg mb-4 text-sm">{{ success }}</div>
+{% endif %}
+
+<div class="bg-white rounded-xl shadow-sm overflow-hidden mb-6">
+    <div class="px-4 py-3 font-semibold border-b text-red-700">Расхождения</div>
+    <table class="w-full text-sm">
+        <thead class="bg-gray-50 text-left">
+            <tr>
+                <th class="px-4 py-2">Товар</th>
+                <th class="px-4 py-2">План (учёт)</th>
+                <th class="px-4 py-2">Факт</th>
+                <th class="px-4 py-2">Разница</th>
+            </tr>
+        </thead>
+        <tbody class="divide-y">
+            {% for line in diffs %}
+            <tr>
+                <td class="px-4 py-2">
+                    <div class="font-medium">{{ line.product_name }}</div>
+                    <div class="text-xs text-gray-500">{{ line.variant_info or '' }}</div>
+                </td>
+                <td class="px-4 py-2">{{ line.system_stock }}</td>
+                <td class="px-4 py-2">{{ line.fact_stock }}</td>
+                <td class="px-4 py-2 font-medium {% if line.fact_stock - line.system_stock < 0 %}text-red-600{% else %}text-green-600{% endif %}">
+                    {{ line.fact_stock - line.system_stock }}
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="4" class="px-4 py-6 text-center text-green-600">Расхождений нет</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% if diffs and user.role in ('owner', 'admin') and not count.applied %}
+<form method="post" action="/inventory/apply/{{ count.id }}" onsubmit="return confirm('Обновить остатки по факту инвентаризации?');">
+    <button class="bg-slate-900 text-white px-5 py-2.5 rounded-lg text-sm">
+        Применить остатки по факту (только админ/владелец)
+    </button>
+</form>
+<p class="text-xs text-gray-500 mt-2">Продавец сам остатки не меняет. Кнопка обновит склад по введённому факту.</p>
+{% elif count.applied %}
+<p class="text-green-700 text-sm font-medium">Остатки уже применены админом.</p>
+{% endif %}
+{% endblock %}

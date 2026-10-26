@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Настройки — CloudVape{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-bold mb-6">Настройки владельца</h1>
+<div class="bg-white rounded-xl shadow-sm p-6 max-w-lg">
+    <h2 class="font-semibold mb-2">Telegram для уведомлений</h2>
+    <p class="text-sm text-gray-500 mb-4">
+        Напиши боту /start со своего Telegram, скопируй свой ID (бот покажет при /start)
+        или узнай у @userinfobot, и вставь сюда — будешь получать алерты об остатках и инвентаризациях.
+    </p>
+    <form method="post" action="/settings/telegram" class="flex gap-2">
+        <input type="text" name="telegram_id" value="{{ user.telegram_id or '' }}" placeholder="Telegram ID"
+               class="flex-1 border rounded-lg px-3 py-2 text-sm">
+        <button class="bg-slate-900 text-white px-4 py-2 rounded-lg text-sm">Сохранить</button>
+    </form>
+    {% if user.telegram_id %}
+    <p class="text-green-600 text-sm mt-3">Привязан: {{ user.telegram_id }}</p>
+    {% endif %}
+</div>
+{% endblock %}
