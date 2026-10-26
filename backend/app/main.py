@@ -665,17 +665,30 @@ async def update_variant(
 
 # ========== Seller web POS (/sell) ==========
 
-async def get_seller_store(user: User, db: AsyncSession):
-    """Возвращает (store_id, store_name) для продавца"""
+async def get_seller_store(user: User, db: AsyncSession, preferred_store_id: int | None = None):
+    """Возвращает (store_id, store_name) для продавца или владельца"""
+    if preferred_store_id and user.role == "owner":
+        store = await db.get(Store, preferred_store_id)
+        if store and store.is_active:
+            return store.id, store.name
+
     result = await db.execute(
         select(StoreUser, Store)
         .join(Store, Store.id == StoreUser.store_id)
         .where(StoreUser.user_id == user.id, StoreUser.is_active == True, Store.is_active == True)
     )
     row = result.first()
-    if not row:
-        return None, None
-    return row.StoreUser.store_id, row.Store.name
+    if row:
+        return row.StoreUser.store_id, row.Store.name
+
+    # Владелец без привязки — берём первый магазин
+    if user.role == "owner":
+        r = await db.execute(select(Store).where(Store.is_active == True).order_by(Store.id).limit(1))
+        store = r.scalar_one_or_none()
+        if store:
+            return store.id, store.name
+
+    return None, None
 
 
 @app.post("/sellers/create")
@@ -720,221 +733,110 @@ async def sell_page(
     product_id: int | None = None,
     variant_id: int | None = None,
     qty: int | None = None,
+    store_id: int | None = None,
     db: AsyncSession = Depends(get_db),
 ):
     user = await get_current_web_user(request, db)
     if not user:
-        return RedirectResponse("/login?next=/sell", status_code=303)
+        return RedirectResponse("/login", status_code=303)
 
-    store_id, store_name = await get_seller_store(user, db)
-    if not store_id:
-        # owner без привязки — пусть выберет через админку
-        if user.role == "owner":
-            return RedirectResponse("/stores", status_code=303)
+    sid, store_name = await get_seller_store(user, db, preferred_store_id=store_id)
+    cart = request.session.get("cart") or []
+    cart_total = sum(float(i.get("price", 0)) * int(i.get("qty", 0)) for i in cart)
+
+    if not sid:
         return templates.TemplateResponse("sell.html", {
-            "request": request, "user": user, "store_name": "—",
-            "step": "category", "categories": [],
-            "error": "Ты не привязан к магазину. Обратись к администратору.",
+            "request": request,
+            "user": user,
+            "store_name": "—",
+            "step": "category",
+            "categories": [],
+            "cart": cart,
+            "cart_total": cart_total,
+            "error": "Нет доступного магазина. Создай магазин в админке и привяжи продавца.",
         })
 
-    cart = request.session.get("cart") or []
-    cart_total = sum(i["price"] * i["qty"] for i in cart)
     ctx = {
         "request": request,
         "user": user,
-        "store_name": store_name,
-        "step": step,
+        "store_name": store_name or "—",
+        "step": step or "category",
         "cart": cart,
         "cart_total": cart_total,
     }
 
-    if step == "cart":
-        return templates.TemplateResponse("sell.html", ctx)
-
-    if step == "category":
-        result = await db.execute(
-            select(Category)
-            .where(Category.store_id == store_id, Category.is_active == True)
-            .order_by(Category.sort_order, Category.name)
-        )
-        ctx["categories"] = result.scalars().all()
-
-    elif step == "product" and category_id:
-        result = await db.execute(
-            select(Product)
-            .where(
-                Product.store_id == store_id,
-                Product.category_id == category_id,
-                Product.is_active == True,
-            )
-            .options(selectinload(Product.variants))
-            .order_by(Product.name)
-        )
-        products = []
-        for p in result.scalars().all():
-            if any(v.is_active and v.stock > 0 for v in p.variants):
-                products.append(p)
-        ctx["products"] = products
-        ctx["category_id"] = category_id
-
-    elif step == "variant" and product_id:
-        product = await db.get(Product, product_id)
-        result = await db.execute(
-            select(ProductVariant)
-            .where(
-                ProductVariant.product_id == product_id,
-                ProductVariant.is_active == True,
-                ProductVariant.stock > 0,
-            )
-            .order_by(ProductVariant.strength, ProductVariant.flavor)
-        )
-        ctx["variants"] = result.scalars().all()
-        ctx["product_id"] = product_id
-        ctx["product_name"] = product.name if product else ""
-        ctx["category_id"] = product.category_id if product else None
-
-    elif step == "qty" and variant_id:
-        variant = await db.get(ProductVariant, variant_id)
-        if not variant or variant.stock <= 0:
-            return RedirectResponse("/sell", status_code=303)
-        await db.refresh(variant, ["product"])
-        ctx["variant_id"] = variant_id
-        ctx["product_id"] = variant.product_id
-        ctx["product_name"] = variant.product.name if variant.product else ""
-        ctx["strength"] = variant.strength
-        ctx["flavor"] = variant.flavor
-        ctx["price"] = float(variant.price)
-        ctx["max_stock"] = variant.stock
-
-    elif step == "confirm" and variant_id and qty:
-        variant = await db.get(ProductVariant, variant_id)
-        if not variant or qty < 1 or qty > variant.stock:
-            return RedirectResponse("/sell", status_code=303)
-        await db.refresh(variant, ["product"])
-        parts = []
-        if variant.strength:
-            parts.append(variant.strength)
-        if variant.flavor:
-            parts.append(variant.flavor)
-        ctx["variant_id"] = variant_id
-        ctx["product_name"] = variant.product.name if variant.product else ""
-        ctx["variant_info"] = " / ".join(parts) if parts else None
-        ctx["qty"] = qty
-        ctx["price"] = float(variant.price)
-        ctx["total"] = float(variant.price) * qty
-        ctx["max_stock"] = variant.stock
-    else:
-        return RedirectResponse("/sell", status_code=303)
-
-    return templates.TemplateResponse("sell.html", ctx)
-
-
-
-@app.post("/sell/add")
-async def sell_add_to_cart(
-    request: Request,
-    variant_id: int = Form(...),
-    qty: int = Form(...),
-    db: AsyncSession = Depends(get_db),
-):
-    user = await get_current_web_user(request, db)
-    if not user:
-        return RedirectResponse("/login", status_code=303)
-
-    variant = await db.get(ProductVariant, variant_id)
-    if not variant or qty < 1 or qty > variant.stock:
-        return RedirectResponse("/sell", status_code=303)
-
-    await db.refresh(variant, ["product"])
-    parts = []
-    if variant.strength:
-        parts.append(variant.strength)
-    if variant.flavor:
-        parts.append(variant.flavor)
-    name = variant.product.name if variant.product else "Товар"
-    if parts:
-        name = f"{name} ({' / '.join(parts)})"
-
-    cart = request.session.get("cart") or []
-    cart.append({
-        "variant_id": variant_id,
-        "name": name,
-        "qty": qty,
-        "price": float(variant.price),
-    })
-    request.session["cart"] = cart
-    return RedirectResponse("/sell?step=cart", status_code=303)
-
-
-@app.post("/sell/checkout")
-async def sell_checkout(request: Request, db: AsyncSession = Depends(get_db)):
-    user = await get_current_web_user(request, db)
-    if not user:
-        return RedirectResponse("/login", status_code=303)
-
-    store_id, store_name = await get_seller_store(user, db)
-    if not store_id:
-        return RedirectResponse("/sell", status_code=303)
-
-    cart = request.session.get("cart") or []
-    if not cart:
-        return RedirectResponse("/sell", status_code=303)
-
-    from app.services.inventory import create_sale, InsufficientStockError
-    items = [{"variant_id": i["variant_id"], "quantity": i["qty"]} for i in cart]
-
     try:
-        sale = await create_sale(
-            session=db,
-            store_id=store_id,
-            seller_id=user.id,
-            items=items,
-        )
-        await db.commit()
-        request.session["cart"] = []
-        cats = (await db.execute(
-            select(Category).where(Category.store_id == store_id, Category.is_active == True)
-            .order_by(Category.sort_order, Category.name)
-        )).scalars().all()
-        return templates.TemplateResponse("sell.html", {
-            "request": request,
-            "user": user,
-            "store_name": store_name,
-            "step": "category",
-            "categories": cats,
-            "cart": [],
-            "cart_total": 0,
-            "success": f"✅ Чек №{sale.id} · {int(sale.total_amount)} ₽ · позиций: {len(items)}",
-        })
-    except InsufficientStockError as e:
-        await db.rollback()
-        return templates.TemplateResponse("sell.html", {
-            "request": request,
-            "user": user,
-            "store_name": store_name,
-            "step": "cart",
-            "cart": cart,
-            "cart_total": sum(i["price"] * i["qty"] for i in cart),
-            "error": f"Недостаточно «{e.variant_name}». Доступно: {e.available} шт.",
-        })
+        if step == "cart":
+            return templates.TemplateResponse("sell.html", ctx)
+
+        if step in (None, "", "category"):
+            result = await db.execute(
+                select(Category)
+                .where(Category.store_id == sid, Category.is_active == True)
+                .order_by(Category.sort_order, Category.name)
+            )
+            ctx["step"] = "category"
+            ctx["categories"] = result.scalars().all()
+            return templates.TemplateResponse("sell.html", ctx)
+
+        if step == "product" and category_id:
+            result = await db.execute(
+                select(Product)
+                .where(
+                    Product.store_id == sid,
+                    Product.category_id == category_id,
+                    Product.is_active == True,
+                )
+                .options(selectinload(Product.variants))
+                .order_by(Product.name)
+            )
+            products = []
+            for p in result.scalars().all():
+                if any(v.is_active and v.stock > 0 for v in p.variants):
+                    products.append(p)
+            ctx["products"] = products
+            ctx["category_id"] = category_id
+            return templates.TemplateResponse("sell.html", ctx)
+
+        if step == "variant" and product_id:
+            product = await db.get(Product, product_id)
+            result = await db.execute(
+                select(ProductVariant)
+                .where(
+                    ProductVariant.product_id == product_id,
+                    ProductVariant.is_active == True,
+                    ProductVariant.stock > 0,
+                )
+                .order_by(ProductVariant.strength, ProductVariant.flavor)
+            )
+            ctx["variants"] = result.scalars().all()
+            ctx["product_id"] = product_id
+            ctx["product_name"] = product.name if product else ""
+            ctx["category_id"] = product.category_id if product else None
+            return templates.TemplateResponse("sell.html", ctx)
+
+        if step == "qty" and variant_id:
+            variant = await db.get(ProductVariant, variant_id)
+            if not variant or variant.stock <= 0:
+                return RedirectResponse("/sell", status_code=303)
+            await db.refresh(variant, ["product"])
+            ctx["variant_id"] = variant_id
+            ctx["product_id"] = variant.product_id
+            ctx["product_name"] = variant.product.name if variant.product else ""
+            ctx["strength"] = variant.strength
+            ctx["flavor"] = variant.flavor
+            ctx["price"] = float(variant.price)
+            ctx["max_stock"] = variant.stock
+            return templates.TemplateResponse("sell.html", ctx)
+
+        # неизвестный шаг
+        return RedirectResponse("/sell", status_code=303)
     except Exception as e:
-        await db.rollback()
-        return templates.TemplateResponse("sell.html", {
-            "request": request,
-            "user": user,
-            "store_name": store_name,
-            "step": "cart",
-            "cart": cart,
-            "cart_total": sum(i["price"] * i["qty"] for i in cart),
-            "error": str(e),
-        })
-
-
-@app.post("/sell/clear-cart")
-async def sell_clear_cart(request: Request):
-    request.session["cart"] = []
-    return RedirectResponse("/sell", status_code=303)
-
+        print("SELL ERROR:", e)
+        ctx["step"] = "category"
+        ctx["categories"] = []
+        ctx["error"] = f"Ошибка: {e}"
+        return templates.TemplateResponse("sell.html", ctx)
 
 
 @app.get("/sell/shift", response_class=HTMLResponse)
