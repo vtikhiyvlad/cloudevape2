@@ -5,20 +5,48 @@
     <h1 class="text-2xl font-bold">Продавцы</h1>
 </div>
 
+<!-- Создать продавца с логином (для веб-кассы) -->
 <div class="bg-white rounded-xl shadow-sm p-6 mb-6">
-    <h2 class="font-semibold mb-4">Привязать продавца к магазину</h2>
+    <h2 class="font-semibold mb-2">Создать продавца (для веб-кассы)</h2>
     <p class="text-sm text-gray-500 mb-4">
-        Продавец должен сначала написать боту /start. После этого он появится в списке ниже.
+        Логин и пароль — чтобы продавец заходил на сайт и продавал с телефона/планшета.
+        Telegram при этом тоже можно привязать отдельно.
+    </p>
+    <form method="post" action="/sellers/create" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <input type="text" name="full_name" required placeholder="Имя продавца"
+               class="border border-gray-300 rounded-lg px-3 py-2 text-sm">
+        <input type="text" name="username" required placeholder="Логин (латиницей)"
+               class="border border-gray-300 rounded-lg px-3 py-2 text-sm">
+        <input type="text" name="password" required placeholder="Пароль"
+               class="border border-gray-300 rounded-lg px-3 py-2 text-sm">
+        <select name="store_id" required class="border border-gray-300 rounded-lg px-3 py-2 text-sm">
+            <option value="">— магазин —</option>
+            {% for s in stores %}
+            <option value="{{ s.id }}">{{ s.name }}</option>
+            {% endfor %}
+        </select>
+        <button type="submit" class="md:col-span-2 bg-slate-900 text-white px-4 py-2 rounded-lg text-sm hover:bg-slate-800">
+            Создать и привязать к магазину
+        </button>
+    </form>
+</div>
+
+<!-- Привязать из Telegram -->
+<div class="bg-white rounded-xl shadow-sm p-6 mb-6">
+    <h2 class="font-semibold mb-2">Привязать из Telegram</h2>
+    <p class="text-sm text-gray-500 mb-4">
+        Продавец пишет боту /start → появляется здесь → привязываешь к магазину.
+        Для веб-кассы потом можно задать пароль.
     </p>
     <form method="post" action="/sellers/assign" class="grid grid-cols-1 md:grid-cols-3 gap-3">
         <select name="user_id" required class="border border-gray-300 rounded-lg px-3 py-2 text-sm">
-            <option value="">— выберите продавца —</option>
+            <option value="">— выберите —</option>
             {% for u in available_users %}
             <option value="{{ u.id }}">{{ u.full_name or u.username or u.telegram_id }} (tg: {{ u.telegram_id }})</option>
             {% endfor %}
         </select>
         <select name="store_id" required class="border border-gray-300 rounded-lg px-3 py-2 text-sm">
-            <option value="">— выберите магазин —</option>
+            <option value="">— магазин —</option>
             {% for s in stores %}
             <option value="{{ s.id }}">{{ s.name }}</option>
             {% endfor %}
@@ -34,19 +62,19 @@
         <thead class="bg-gray-50 text-left">
             <tr>
                 <th class="px-4 py-3 font-medium text-gray-600">Имя</th>
-                <th class="px-4 py-3 font-medium text-gray-600">Telegram ID</th>
+                <th class="px-4 py-3 font-medium text-gray-600">Логин</th>
+                <th class="px-4 py-3 font-medium text-gray-600">Telegram</th>
                 <th class="px-4 py-3 font-medium text-gray-600">Магазин</th>
-                <th class="px-4 py-3 font-medium text-gray-600">Роль</th>
                 <th class="px-4 py-3 font-medium text-gray-600">Действие</th>
             </tr>
         </thead>
         <tbody class="divide-y">
             {% for link in links %}
             <tr class="hover:bg-gray-50">
-                <td class="px-4 py-3 font-medium">{{ link.user.full_name or link.user.username or '—' }}</td>
-                <td class="px-4 py-3 text-gray-500">{{ link.user.telegram_id }}</td>
+                <td class="px-4 py-3 font-medium">{{ link.user.full_name or '—' }}</td>
+                <td class="px-4 py-3">{{ link.user.username or '—' }}</td>
+                <td class="px-4 py-3 text-gray-500">{{ link.user.telegram_id or '—' }}</td>
                 <td class="px-4 py-3">{{ link.store.name }}</td>
-                <td class="px-4 py-3">{{ link.role }}</td>
                 <td class="px-4 py-3">
                     <form method="post" action="/sellers/remove" class="inline">
                         <input type="hidden" name="link_id" value="{{ link.id }}">
@@ -56,10 +84,15 @@
             </tr>
             {% else %}
             <tr>
-                <td colspan="5" class="px-4 py-8 text-center text-gray-400">Продавцы ещё не привязаны</td>
+                <td colspan="5" class="px-4 py-8 text-center text-gray-400">Продавцы ещё не добавлены</td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
+</div>
+
+<div class="mt-4 text-sm text-gray-500">
+    Веб-касса для продавца: <a href="/sell" class="text-blue-600 underline">/sell</a>
+    (вход тем же логином/паролем)
 </div>
 {% endblock %}

@@ -1,10 +1,15 @@
 from aiogram import Router, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, Command
 from sqlalchemy import select
+from datetime import datetime, timezone, timedelta
+import random
+import string
+
 from app.core.database import AsyncSessionLocal
 from app.models.user import User
 from app.models.store import StoreUser, Store
+from app.models.login_code import LoginCode
 
 router = Router()
 
@@ -14,7 +19,7 @@ def main_keyboard():
         keyboard=[
             [KeyboardButton(text="🛒 Продажа")],
             [KeyboardButton(text="📦 Остатки"), KeyboardButton(text="📊 Моя смена")],
-            [KeyboardButton(text="↩️ Возврат")],
+            [KeyboardButton(text="🌐 Вход на сайт")],
         ],
         resize_keyboard=True,
     )
@@ -31,7 +36,6 @@ async def cmd_start(message: Message):
         user = result.scalar_one_or_none()
 
         if not user:
-            # Новый пользователь — пока просто регистрируем как seller без магазина
             user = User(
                 telegram_id=tg_id,
                 full_name=full_name,
@@ -44,12 +48,17 @@ async def cmd_start(message: Message):
             await message.answer(
                 f"Привет, {full_name}!\n\n"
                 "Ты зарегистрирован в CloudVape.\n"
-                "Обратись к администратору, чтобы тебя добавили в магазин.",
+                "Обратись к администратору, чтобы тебя добавили в магазин.\n\n"
+                "Чтобы войти на сайт — нажми «🌐 Вход на сайт».",
                 reply_markup=main_keyboard(),
             )
             return
 
-        # Проверяем, есть ли привязка к магазину
+        # обновим имя если изменилось
+        if full_name and user.full_name != full_name:
+            user.full_name = full_name
+            await session.commit()
+
         link_result = await session.execute(
             select(StoreUser, Store)
             .join(Store, Store.id == StoreUser.store_id)
@@ -73,3 +82,41 @@ async def cmd_start(message: Message):
             "Выбери действие:",
             reply_markup=main_keyboard(),
         )
+
+
+@router.message(F.text == "🌐 Вход на сайт")
+@router.message(Command("web"))
+async def web_login_code(message: Message):
+    """Выдаёт одноразовый код для входа на сайт"""
+    tg_id = message.from_user.id
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(User).where(User.telegram_id == tg_id))
+        user = result.scalar_one_or_none()
+        if not user:
+            await message.answer("Сначала нажми /start")
+            return
+
+        # инвалидируем старые коды
+        old = await session.execute(
+            select(LoginCode).where(LoginCode.user_id == user.id, LoginCode.used == False)
+        )
+        for c in old.scalars().all():
+            c.used = True
+
+        code = "".join(random.choices(string.digits, k=6))
+        lc = LoginCode(
+            user_id=user.id,
+            code=code,
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+            used=False,
+        )
+        session.add(lc)
+        await session.commit()
+
+    await message.answer(
+        f"🔐 <b>Код для входа на сайт</b>\n\n"
+        f"<code>{code}</code>\n\n"
+        f"Действует <b>5 минут</b>.\n"
+        f"На сайте: Войти → «Через Telegram» → введи этот код.\n\n"
+        f"Отдельный логин/пароль не нужен."
+    )

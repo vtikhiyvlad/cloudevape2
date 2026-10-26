@@ -1,14 +1,55 @@
 {% extends "base.html" %}
 {% block title %}Продажи — CloudVape{% endblock %}
 {% block content %}
-<h1 class="text-2xl font-bold mb-6">Продажи сегодня</h1>
+<div class="flex flex-wrap justify-between items-center gap-3 mb-6">
+    <h1 class="text-2xl font-bold">Продажи</h1>
+</div>
+
+<div class="bg-white rounded-xl shadow-sm p-4 mb-6">
+    <form method="get" class="flex flex-wrap gap-3 items-end">
+        <div>
+            <label class="block text-xs text-gray-500 mb-1">Магазин</label>
+            <select name="store_id" class="border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                <option value="">Все магазины</option>
+                {% for s in stores %}
+                <option value="{{ s.id }}" {% if store_id == s.id %}selected{% endif %}>{{ s.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div>
+            <label class="block text-xs text-gray-500 mb-1">С даты</label>
+            <input type="date" name="date_from" value="{{ date_from or '' }}"
+                   class="border border-gray-300 rounded-lg px-3 py-2 text-sm">
+        </div>
+        <div>
+            <label class="block text-xs text-gray-500 mb-1">По дату</label>
+            <input type="date" name="date_to" value="{{ date_to or '' }}"
+                   class="border border-gray-300 rounded-lg px-3 py-2 text-sm">
+        </div>
+        <button type="submit" class="bg-slate-900 text-white px-4 py-2 rounded-lg text-sm hover:bg-slate-800">
+            Показать
+        </button>
+    </form>
+</div>
+
+<div class="grid grid-cols-2 gap-4 mb-6">
+    <div class="bg-white rounded-xl p-4 shadow-sm">
+        <div class="text-sm text-gray-500">Чеков</div>
+        <div class="text-2xl font-bold">{{ sales_count }}</div>
+    </div>
+    <div class="bg-white rounded-xl p-4 shadow-sm">
+        <div class="text-sm text-gray-500">Сумма</div>
+        <div class="text-2xl font-bold">{{ revenue | int }} ₽</div>
+    </div>
+</div>
 
 <div class="bg-white rounded-xl shadow-sm overflow-hidden">
     <table class="w-full text-sm">
         <thead class="bg-gray-50 text-left">
             <tr>
                 <th class="px-4 py-3 font-medium text-gray-600">№</th>
-                <th class="px-4 py-3 font-medium text-gray-600">Время</th>
+                <th class="px-4 py-3 font-medium text-gray-600">Дата</th>
+                <th class="px-4 py-3 font-medium text-gray-600">Магазин</th>
                 <th class="px-4 py-3 font-medium text-gray-600">Позиции</th>
                 <th class="px-4 py-3 font-medium text-gray-600">Сумма</th>
             </tr>
@@ -17,17 +58,18 @@
             {% for sale in sales %}
             <tr class="hover:bg-gray-50">
                 <td class="px-4 py-3">{{ sale.id }}</td>
-                <td class="px-4 py-3 text-gray-500">{{ sale.created_at.strftime('%H:%M') }}</td>
+                <td class="px-4 py-3 text-gray-500">{{ sale.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
+                <td class="px-4 py-3">{{ sale.store_name or '—' }}</td>
                 <td class="px-4 py-3">
                     {% for item in sale.items %}
-                    <div>{{ item.product_name }} {% if item.variant_info %}({{ item.variant_info }}){% endif %} × {{ item.quantity }}</div>
+                    <div>{{ item.product_name }}{% if item.variant_info %} ({{ item.variant_info }}){% endif %} × {{ item.quantity }}</div>
                     {% endfor %}
                 </td>
                 <td class="px-4 py-3 font-medium">{{ sale.total_amount | int }} ₽</td>
             </tr>
             {% else %}
             <tr>
-                <td colspan="4" class="px-4 py-8 text-center text-gray-400">Продаж пока нет</td>
+                <td colspan="5" class="px-4 py-8 text-center text-gray-400">Продаж нет</td>
             </tr>
             {% endfor %}
         </tbody>

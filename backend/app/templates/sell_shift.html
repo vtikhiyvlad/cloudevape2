@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Моя смена — CloudVape</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <nav class="bg-slate-900 text-white px-4 py-3 flex justify-between items-center">
+        <div class="font-bold">Моя смена</div>
+        <a href="/sell" class="text-sm text-gray-300">← К продажам</a>
+    </nav>
+    <main class="max-w-lg mx-auto px-3 py-6">
+        <div class="bg-white rounded-xl shadow-sm p-6 mb-4 text-center">
+            <div class="text-sm text-gray-500 mb-1">Продаж сегодня</div>
+            <div class="text-3xl font-bold">{{ count }}</div>
+            <div class="text-sm text-gray-500 mt-3 mb-1">Сумма</div>
+            <div class="text-3xl font-bold text-green-600">{{ total | int }} ₽</div>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm overflow-hidden">
+            {% for s in sales %}
+            <div class="px-4 py-3 border-b flex justify-between text-sm">
+                <span class="text-gray-500">{{ s.created_at.strftime('%H:%M') }} · №{{ s.id }}</span>
+                <span class="font-medium">{{ s.total_amount | int }} ₽</span>
+            </div>
+            {% else %}
+            <div class="px-4 py-8 text-center text-gray-400">Продаж пока нет</div>
+            {% endfor %}
+        </div>
+    </main>
+</body>
+</html>

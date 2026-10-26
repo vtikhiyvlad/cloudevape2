@@ -15,7 +15,7 @@ from sqlalchemy.orm import selectinload
 from app.core.database import engine, Base, AsyncSessionLocal, get_db
 from app.core.config import get_settings
 from app.core.security import get_password_hash, verify_password
-from app.models import User, Store, Sale
+from app.models import User, Store, Sale, LoginCode
 from app.models.store import StoreUser
 from app.models.product import Category
 from app.models.product import Product, ProductVariant
@@ -101,6 +101,8 @@ async def dashboard(request: Request, db: AsyncSession = Depends(get_db)):
     user = await get_current_web_user(request, db)
     if not user:
         return RedirectResponse("/login", status_code=303)
+    if user.role == "seller":
+        return RedirectResponse("/sell", status_code=303)
 
     stores_count = (await db.execute(select(func.count(Store.id)).where(Store.is_active == True))).scalar() or 0
 
@@ -144,6 +146,44 @@ async def login_submit(
         })
 
     request.session["user_id"] = user.id
+    # Продавцы сразу на веб-кассу
+    if user.role == "seller":
+        return RedirectResponse("/sell", status_code=303)
+    return RedirectResponse("/", status_code=303)
+
+
+@app.post("/login/telegram")
+async def login_telegram(
+    request: Request,
+    code: str = Form(...),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.models.login_code import LoginCode
+    code = code.strip()
+    result = await db.execute(
+        select(LoginCode).where(LoginCode.code == code, LoginCode.used == False)
+    )
+    lc = result.scalar_one_or_none()
+    now = datetime.now(timezone.utc)
+    exp = lc.expires_at if lc.expires_at.tzinfo else lc.expires_at.replace(tzinfo=timezone.utc)
+    if not lc or exp < now:
+        return templates.TemplateResponse("login.html", {
+            "request": request,
+            "user": None,
+            "error": "Код неверный или истёк. Запроси новый в боте (🌐 Вход на сайт).",
+        })
+    lc.used = True
+    user = await db.get(User, lc.user_id)
+    if not user or not user.is_active:
+        return templates.TemplateResponse("login.html", {
+            "request": request,
+            "user": None,
+            "error": "Пользователь не найден",
+        })
+    await db.commit()
+    request.session["user_id"] = user.id
+    if user.role == "seller":
+        return RedirectResponse("/sell", status_code=303)
     return RedirectResponse("/", status_code=303)
 
 
@@ -258,26 +298,67 @@ async def products_import(
     return RedirectResponse(f"/products?store_id={store_id}", status_code=303)
 
 
+
 @app.get("/sales", response_class=HTMLResponse)
-async def sales_page(request: Request, db: AsyncSession = Depends(get_db)):
+async def sales_page(
+    request: Request,
+    store_id: int | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
     user = await get_current_web_user(request, db)
     if not user:
         return RedirectResponse("/login", status_code=303)
 
-    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    result = await db.execute(
-        select(Sale)
-        .where(Sale.created_at >= today_start)
-        .options(selectinload(Sale.items))
-        .order_by(Sale.created_at.desc())
-        .limit(50)
-    )
+    stores_result = await db.execute(select(Store).where(Store.is_active == True).order_by(Store.name))
+    stores_list = stores_result.scalars().all()
+
+    q = select(Sale).options(selectinload(Sale.items)).order_by(Sale.created_at.desc()).limit(200)
+
+    if store_id:
+        q = q.where(Sale.store_id == store_id)
+
+    from datetime import date as date_cls, time as time_cls
+    if date_from:
+        try:
+            d = date_cls.fromisoformat(date_from)
+            q = q.where(Sale.created_at >= datetime.combine(d, time_cls.min, tzinfo=timezone.utc))
+        except ValueError:
+            pass
+    if date_to:
+        try:
+            d = date_cls.fromisoformat(date_to)
+            q = q.where(Sale.created_at <= datetime.combine(d, time_cls.max, tzinfo=timezone.utc))
+        except ValueError:
+            pass
+
+    # если нет дат — сегодня по умолчанию
+    if not date_from and not date_to:
+        today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        q = q.where(Sale.created_at >= today_start)
+        date_from = today_start.strftime("%Y-%m-%d")
+
+    result = await db.execute(q)
     sales_list = result.scalars().all()
+
+    # имена магазинов
+    store_map = {s.id: s.name for s in stores_list}
+    for s in sales_list:
+        s.store_name = store_map.get(s.store_id, "—")
+
+    revenue = sum(float(s.total_amount) for s in sales_list)
 
     return templates.TemplateResponse("sales.html", {
         "request": request,
         "user": user,
+        "stores": stores_list,
+        "store_id": store_id,
+        "date_from": date_from,
+        "date_to": date_to,
         "sales": sales_list,
+        "sales_count": len(sales_list),
+        "revenue": revenue,
     })
 
 
@@ -580,3 +661,301 @@ async def update_variant(
 
     await db.commit()
     return RedirectResponse(f"/products?store_id={store_id}", status_code=303)
+
+
+# ========== Seller web POS (/sell) ==========
+
+async def get_seller_store(user: User, db: AsyncSession):
+    """Возвращает (store_id, store_name) для продавца"""
+    result = await db.execute(
+        select(StoreUser, Store)
+        .join(Store, Store.id == StoreUser.store_id)
+        .where(StoreUser.user_id == user.id, StoreUser.is_active == True, Store.is_active == True)
+    )
+    row = result.first()
+    if not row:
+        return None, None
+    return row.StoreUser.store_id, row.Store.name
+
+
+@app.post("/sellers/create")
+async def sellers_create(
+    request: Request,
+    full_name: str = Form(...),
+    username: str = Form(...),
+    password: str = Form(...),
+    store_id: int = Form(...),
+    db: AsyncSession = Depends(get_db),
+):
+    current = await get_current_web_user(request, db)
+    if not current or current.role not in ("owner", "admin"):
+        return RedirectResponse("/login", status_code=303)
+
+    username = username.strip().lower()
+    existing = await db.execute(select(User).where(User.username == username))
+    if existing.scalar_one_or_none():
+        return RedirectResponse("/sellers", status_code=303)
+
+    user = User(
+        full_name=full_name.strip(),
+        username=username,
+        password_hash=get_password_hash(password),
+        role="seller",
+        is_active=True,
+    )
+    db.add(user)
+    await db.flush()
+
+    link = StoreUser(user_id=user.id, store_id=store_id, role="seller", is_active=True)
+    db.add(link)
+    await db.commit()
+    return RedirectResponse("/sellers", status_code=303)
+
+
+@app.get("/sell", response_class=HTMLResponse)
+async def sell_page(
+    request: Request,
+    step: str = "category",
+    category_id: int | None = None,
+    product_id: int | None = None,
+    variant_id: int | None = None,
+    qty: int | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    user = await get_current_web_user(request, db)
+    if not user:
+        return RedirectResponse("/login?next=/sell", status_code=303)
+
+    store_id, store_name = await get_seller_store(user, db)
+    if not store_id:
+        # owner без привязки — пусть выберет через админку
+        if user.role == "owner":
+            return RedirectResponse("/stores", status_code=303)
+        return templates.TemplateResponse("sell.html", {
+            "request": request, "user": user, "store_name": "—",
+            "step": "category", "categories": [],
+            "error": "Ты не привязан к магазину. Обратись к администратору.",
+        })
+
+    cart = request.session.get("cart") or []
+    cart_total = sum(i["price"] * i["qty"] for i in cart)
+    ctx = {
+        "request": request,
+        "user": user,
+        "store_name": store_name,
+        "step": step,
+        "cart": cart,
+        "cart_total": cart_total,
+    }
+
+    if step == "cart":
+        return templates.TemplateResponse("sell.html", ctx)
+
+    if step == "category":
+        result = await db.execute(
+            select(Category)
+            .where(Category.store_id == store_id, Category.is_active == True)
+            .order_by(Category.sort_order, Category.name)
+        )
+        ctx["categories"] = result.scalars().all()
+
+    elif step == "product" and category_id:
+        result = await db.execute(
+            select(Product)
+            .where(
+                Product.store_id == store_id,
+                Product.category_id == category_id,
+                Product.is_active == True,
+            )
+            .options(selectinload(Product.variants))
+            .order_by(Product.name)
+        )
+        products = []
+        for p in result.scalars().all():
+            if any(v.is_active and v.stock > 0 for v in p.variants):
+                products.append(p)
+        ctx["products"] = products
+        ctx["category_id"] = category_id
+
+    elif step == "variant" and product_id:
+        product = await db.get(Product, product_id)
+        result = await db.execute(
+            select(ProductVariant)
+            .where(
+                ProductVariant.product_id == product_id,
+                ProductVariant.is_active == True,
+                ProductVariant.stock > 0,
+            )
+            .order_by(ProductVariant.strength, ProductVariant.flavor)
+        )
+        ctx["variants"] = result.scalars().all()
+        ctx["product_id"] = product_id
+        ctx["product_name"] = product.name if product else ""
+        ctx["category_id"] = product.category_id if product else None
+
+    elif step == "qty" and variant_id:
+        variant = await db.get(ProductVariant, variant_id)
+        if not variant or variant.stock <= 0:
+            return RedirectResponse("/sell", status_code=303)
+        await db.refresh(variant, ["product"])
+        ctx["variant_id"] = variant_id
+        ctx["product_id"] = variant.product_id
+        ctx["product_name"] = variant.product.name if variant.product else ""
+        ctx["strength"] = variant.strength
+        ctx["flavor"] = variant.flavor
+        ctx["price"] = float(variant.price)
+        ctx["max_stock"] = variant.stock
+
+    elif step == "confirm" and variant_id and qty:
+        variant = await db.get(ProductVariant, variant_id)
+        if not variant or qty < 1 or qty > variant.stock:
+            return RedirectResponse("/sell", status_code=303)
+        await db.refresh(variant, ["product"])
+        parts = []
+        if variant.strength:
+            parts.append(variant.strength)
+        if variant.flavor:
+            parts.append(variant.flavor)
+        ctx["variant_id"] = variant_id
+        ctx["product_name"] = variant.product.name if variant.product else ""
+        ctx["variant_info"] = " / ".join(parts) if parts else None
+        ctx["qty"] = qty
+        ctx["price"] = float(variant.price)
+        ctx["total"] = float(variant.price) * qty
+        ctx["max_stock"] = variant.stock
+    else:
+        return RedirectResponse("/sell", status_code=303)
+
+    return templates.TemplateResponse("sell.html", ctx)
+
+
+
+@app.post("/sell/add")
+async def sell_add_to_cart(
+    request: Request,
+    variant_id: int = Form(...),
+    qty: int = Form(...),
+    db: AsyncSession = Depends(get_db),
+):
+    user = await get_current_web_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+
+    variant = await db.get(ProductVariant, variant_id)
+    if not variant or qty < 1 or qty > variant.stock:
+        return RedirectResponse("/sell", status_code=303)
+
+    await db.refresh(variant, ["product"])
+    parts = []
+    if variant.strength:
+        parts.append(variant.strength)
+    if variant.flavor:
+        parts.append(variant.flavor)
+    name = variant.product.name if variant.product else "Товар"
+    if parts:
+        name = f"{name} ({' / '.join(parts)})"
+
+    cart = request.session.get("cart") or []
+    cart.append({
+        "variant_id": variant_id,
+        "name": name,
+        "qty": qty,
+        "price": float(variant.price),
+    })
+    request.session["cart"] = cart
+    return RedirectResponse("/sell?step=cart", status_code=303)
+
+
+@app.post("/sell/checkout")
+async def sell_checkout(request: Request, db: AsyncSession = Depends(get_db)):
+    user = await get_current_web_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+
+    store_id, store_name = await get_seller_store(user, db)
+    if not store_id:
+        return RedirectResponse("/sell", status_code=303)
+
+    cart = request.session.get("cart") or []
+    if not cart:
+        return RedirectResponse("/sell", status_code=303)
+
+    from app.services.inventory import create_sale, InsufficientStockError
+    items = [{"variant_id": i["variant_id"], "quantity": i["qty"]} for i in cart]
+
+    try:
+        sale = await create_sale(
+            session=db,
+            store_id=store_id,
+            seller_id=user.id,
+            items=items,
+        )
+        await db.commit()
+        request.session["cart"] = []
+        cats = (await db.execute(
+            select(Category).where(Category.store_id == store_id, Category.is_active == True)
+            .order_by(Category.sort_order, Category.name)
+        )).scalars().all()
+        return templates.TemplateResponse("sell.html", {
+            "request": request,
+            "user": user,
+            "store_name": store_name,
+            "step": "category",
+            "categories": cats,
+            "cart": [],
+            "cart_total": 0,
+            "success": f"✅ Чек №{sale.id} · {int(sale.total_amount)} ₽ · позиций: {len(items)}",
+        })
+    except InsufficientStockError as e:
+        await db.rollback()
+        return templates.TemplateResponse("sell.html", {
+            "request": request,
+            "user": user,
+            "store_name": store_name,
+            "step": "cart",
+            "cart": cart,
+            "cart_total": sum(i["price"] * i["qty"] for i in cart),
+            "error": f"Недостаточно «{e.variant_name}». Доступно: {e.available} шт.",
+        })
+    except Exception as e:
+        await db.rollback()
+        return templates.TemplateResponse("sell.html", {
+            "request": request,
+            "user": user,
+            "store_name": store_name,
+            "step": "cart",
+            "cart": cart,
+            "cart_total": sum(i["price"] * i["qty"] for i in cart),
+            "error": str(e),
+        })
+
+
+@app.post("/sell/clear-cart")
+async def sell_clear_cart(request: Request):
+    request.session["cart"] = []
+    return RedirectResponse("/sell", status_code=303)
+
+
+
+@app.get("/sell/shift", response_class=HTMLResponse)
+async def sell_shift(request: Request, db: AsyncSession = Depends(get_db)):
+    user = await get_current_web_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    result = await db.execute(
+        select(Sale)
+        .where(Sale.seller_id == user.id, Sale.created_at >= today_start)
+        .order_by(Sale.created_at.desc())
+    )
+    sales_list = result.scalars().all()
+    total = sum(float(s.total_amount) for s in sales_list)
+
+    return templates.TemplateResponse("sell_shift.html", {
+        "request": request,
+        "user": user,
+        "sales": sales_list,
+        "count": len(sales_list),
+        "total": total,
+    })
