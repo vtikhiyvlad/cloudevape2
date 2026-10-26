@@ -332,6 +332,95 @@ async def auth_magic(request: Request, t: str = "", to: str = "sell", db: AsyncS
 
 
 
+
+@app.get("/app/sell", response_class=HTMLResponse)
+@app.get("/app/admin", response_class=HTMLResponse)
+@app.get("/app/warehouse", response_class=HTMLResponse)
+async def webapp_boot(request: Request):
+    """Точка входа Mini App — автологин через initData."""
+    path = request.url.path
+    if path.endswith("/admin"):
+        dest = "admin"
+    elif path.endswith("/warehouse"):
+        dest = "warehouse"
+    else:
+        dest = "sell"
+    return templates.TemplateResponse("webapp_boot.html", {"request": request, "dest": dest, "user": None})
+
+
+@app.post("/auth/telegram-webapp")
+async def auth_telegram_webapp(request: Request, db: AsyncSession = Depends(get_db)):
+    """Валидация initData Mini App → session cookie."""
+    from app.core.telegram_webapp import validate_init_data
+    from app.core.rate_limit import is_allowed
+    from pydantic import BaseModel
+
+    class Body(BaseModel):
+        init_data: str
+        dest: str = "sell"
+
+    client = request.client.host if request.client else "unknown"
+    if not is_allowed(f"webapp:{client}", max_hits=30, window_sec=60):
+        return JSONResponse({"detail": "Слишком много попыток"}, status_code=429)
+
+    try:
+        body = Body(**(await request.json()))
+    except Exception:
+        return JSONResponse({"detail": "Некорректный запрос"}, status_code=400)
+
+    data = validate_init_data(body.init_data)
+    if not data or not isinstance(data.get("user"), dict):
+        return JSONResponse({"detail": "Подпись Telegram не прошла. Открой через кнопку в боте."}, status_code=401)
+
+    tg_user = data["user"]
+    tg_id = tg_user.get("id")
+    if not tg_id:
+        return JSONResponse({"detail": "Нет user id"}, status_code=401)
+
+    result = await db.execute(select(User).where(User.telegram_id == int(tg_id)))
+    user = result.scalar_one_or_none()
+
+    if not user:
+        # авто-создание продавца (ещё без магазина)
+        user = User(
+            telegram_id=int(tg_id),
+            full_name=(tg_user.get("first_name") or "") + (" " + tg_user["last_name"] if tg_user.get("last_name") else ""),
+            username=tg_user.get("username"),
+            role="seller",
+            is_active=True,
+        )
+        db.add(user)
+        await db.flush()
+    elif not user.is_active:
+        return JSONResponse({"detail": "Доступ закрыт"}, status_code=403)
+
+    # обновить имя
+    fn = (tg_user.get("first_name") or "") + (" " + tg_user["last_name"] if tg_user.get("last_name") else "")
+    if fn.strip() and user.full_name != fn.strip():
+        user.full_name = fn.strip()
+
+    await db.commit()
+    request.session.clear()
+    request.session["user_id"] = user.id
+    request.session["login_at"] = datetime.now(timezone.utc).isoformat()
+    request.session["auth_via"] = "telegram_webapp"
+
+    dest = (body.dest or "sell").lower()
+    if dest == "admin" and user.role in ("sysadmin", "owner", "admin"):
+        redirect = "/"
+    elif dest == "warehouse" or user.role == "warehouse":
+        redirect = "/products"
+    elif user.role == "seller":
+        redirect = "/sell"
+    elif dest == "sell":
+        redirect = "/sell"
+    else:
+        redirect = "/"
+
+    return JSONResponse({"ok": True, "redirect": redirect})
+
+
+
 @app.get("/logout")
 async def logout(request: Request):
     request.session.clear()

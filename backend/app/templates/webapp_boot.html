@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>CloudVape</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+    </style>
+</head>
+<body class="bg-slate-900 text-white min-h-screen flex items-center justify-center p-6">
+    <div class="text-center max-w-sm">
+        <div class="text-2xl font-bold mb-2">CloudVape</div>
+        <p class="text-slate-400 text-sm mb-6" id="status">Входим…</p>
+        <div class="w-8 h-8 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin mx-auto" id="spin"></div>
+        <p class="text-red-400 text-sm mt-6 hidden" id="err"></p>
+        <a href="/login" class="hidden text-indigo-300 text-sm underline mt-4 inline-block" id="fallback">Войти по коду</a>
+    </div>
+    <script>
+        const dest = {{ dest | tojson }};
+        const tg = window.Telegram && window.Telegram.WebApp;
+        if (tg) {
+            tg.ready();
+            tg.expand();
+            try { tg.setHeaderColor('#0f172a'); tg.setBackgroundColor('#0f172a'); } catch(e) {}
+        }
+
+        async function boot() {
+            const status = document.getElementById('status');
+            const err = document.getElementById('err');
+            const spin = document.getElementById('spin');
+            const fallback = document.getElementById('fallback');
+
+            if (!tg || !tg.initData) {
+                status.textContent = 'Открой через кнопку в боте';
+                spin.classList.add('hidden');
+                err.textContent = 'Mini App работает только внутри Telegram.';
+                err.classList.remove('hidden');
+                fallback.classList.remove('hidden');
+                return;
+            }
+
+            try {
+                const res = await fetch('/auth/telegram-webapp', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ init_data: tg.initData, dest: dest }),
+                    credentials: 'same-origin',
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    throw new Error(data.detail || 'Ошибка входа');
+                }
+                status.textContent = 'Готово';
+                window.location.replace(data.redirect || '/sell');
+            } catch (e) {
+                status.textContent = 'Не удалось войти';
+                spin.classList.add('hidden');
+                err.textContent = e.message || String(e);
+                err.classList.remove('hidden');
+                fallback.classList.remove('hidden');
+            }
+        }
+        boot();
+    </script>
+</body>
+</html>
