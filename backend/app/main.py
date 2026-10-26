@@ -72,6 +72,10 @@ async def lifespan(app: FastAPI):
             from sqlalchemy import text as sql_text
             await conn.execute(sql_text("ALTER TABLE product_variants ADD COLUMN IF NOT EXISTS barcode VARCHAR(64)"))
             await conn.execute(sql_text("ALTER TABLE inventory_counts ADD COLUMN IF NOT EXISTS applied BOOLEAN DEFAULT FALSE"))
+            try:
+                await conn.execute(sql_text("ALTER TABLE login_codes ALTER COLUMN code TYPE VARCHAR(64)"))
+            except Exception as e:
+                print("login_codes migrate:", e)
         except Exception as e:
             print("barcode migrate:", e)
     await create_owner_if_not_exists()
@@ -187,6 +191,13 @@ async def login_submit(
     password: str = Form(...),
     db: AsyncSession = Depends(get_db),
 ):
+    from app.core.rate_limit import is_allowed
+    client = request.client.host if request.client else "unknown"
+    if not is_allowed(f"login_pw:{client}", max_hits=5, window_sec=60):
+        return templates.TemplateResponse("login.html", {
+            "request": request, "user": None,
+            "error": "Слишком много попыток. Подожди минуту.",
+        })
     result = await db.execute(select(User).where(User.username == username, User.is_active == True))
     user = result.scalar_one_or_none()
     if not user or not user.password_hash or not verify_password(password, user.password_hash):
@@ -210,32 +221,114 @@ async def login_telegram(
     db: AsyncSession = Depends(get_db),
 ):
     from app.models.login_code import LoginCode
-    code = code.strip()
+    from app.core.rate_limit import is_allowed
+
+    client = request.client.host if request.client else "unknown"
+    if not is_allowed(f"login_pin:{client}", max_hits=8, window_sec=60):
+        return templates.TemplateResponse("login.html", {
+            "request": request, "user": None,
+            "error": "Слишком много попыток. Подожди минуту.",
+        })
+
+    code = (code or "").strip()
+    if not code.isdigit() or len(code) != 8:
+        return templates.TemplateResponse("login.html", {
+            "request": request, "user": None,
+            "error": "Введи 8-значный код из бота.",
+        })
+
     result = await db.execute(
         select(LoginCode).where(LoginCode.code == code, LoginCode.used == False)
     )
     lc = result.scalar_one_or_none()
     now = datetime.now(timezone.utc)
-    exp = lc.expires_at if lc.expires_at.tzinfo else lc.expires_at.replace(tzinfo=timezone.utc)
+    exp = None
+    if lc:
+        exp = lc.expires_at if lc.expires_at.tzinfo else lc.expires_at.replace(tzinfo=timezone.utc)
     if not lc or exp < now:
         return templates.TemplateResponse("login.html", {
-            "request": request,
-            "user": None,
-            "error": "Код неверный или истёк. Запроси новый в боте (🌐 Вход на сайт).",
+            "request": request, "user": None,
+            "error": "Код неверный или истёк. Запроси новый в боте.",
         })
+
     lc.used = True
+    # invalidate siblings
+    siblings = await db.execute(
+        select(LoginCode).where(LoginCode.user_id == lc.user_id, LoginCode.used == False)
+    )
+    for s in siblings.scalars().all():
+        s.used = True
+
     user = await db.get(User, lc.user_id)
     if not user or not user.is_active:
         return templates.TemplateResponse("login.html", {
-            "request": request,
-            "user": None,
-            "error": "Пользователь не найден",
+            "request": request, "user": None,
+            "error": "Доступ закрыт",
         })
     await db.commit()
+    request.session.clear()
     request.session["user_id"] = user.id
+    request.session["login_at"] = datetime.now(timezone.utc).isoformat()
     if user.role == "seller":
         return RedirectResponse("/sell", status_code=303)
     return RedirectResponse("/", status_code=303)
+
+
+@app.get("/auth/magic")
+async def auth_magic(request: Request, t: str = "", db: AsyncSession = Depends(get_db)):
+    """Вход в 1 клик по ссылке из Telegram-бота."""
+    from app.models.login_code import LoginCode
+    from app.core.rate_limit import is_allowed
+
+    client = request.client.host if request.client else "unknown"
+    if not is_allowed(f"magic:{client}", max_hits=15, window_sec=60):
+        return HTMLResponse("<h3>Слишком много попыток</h3>", status_code=429)
+
+    token = (t or "").strip()
+    if len(token) < 20:
+        return RedirectResponse("/login", status_code=303)
+
+    result = await db.execute(
+        select(LoginCode).where(LoginCode.code == token, LoginCode.used == False)
+    )
+    lc = result.scalar_one_or_none()
+    now = datetime.now(timezone.utc)
+    if not lc:
+        return templates.TemplateResponse("login.html", {
+            "request": request, "user": None,
+            "error": "Ссылка недействительна. Запроси новую в боте.",
+        })
+    exp = lc.expires_at if lc.expires_at.tzinfo else lc.expires_at.replace(tzinfo=timezone.utc)
+    if exp < now:
+        lc.used = True
+        await db.commit()
+        return templates.TemplateResponse("login.html", {
+            "request": request, "user": None,
+            "error": "Ссылка истекла. Нажми «Войти на сайт» в боте ещё раз.",
+        })
+
+    lc.used = True
+    siblings = await db.execute(
+        select(LoginCode).where(LoginCode.user_id == lc.user_id, LoginCode.used == False)
+    )
+    for s in siblings.scalars().all():
+        s.used = True
+
+    user = await db.get(User, lc.user_id)
+    if not user or not user.is_active:
+        return RedirectResponse("/login", status_code=303)
+
+    await db.commit()
+    request.session.clear()
+    request.session["user_id"] = user.id
+    request.session["login_at"] = datetime.now(timezone.utc).isoformat()
+
+    if user.role in ("seller", "admin"):
+        return RedirectResponse("/sell", status_code=303)
+    if user.role == "warehouse":
+        return RedirectResponse("/warehouse", status_code=303)
+    return RedirectResponse("/", status_code=303)
+
 
 
 @app.get("/logout")
@@ -434,15 +527,23 @@ async def sellers_page(request: Request, db: AsyncSession = Depends(get_db)):
     )
     links = links_result.scalars().all()
 
-    # Пользователи с telegram_id, которые ещё не привязаны ни к одному магазину
+    if user.role not in ("owner", "admin"):
+        return RedirectResponse("/", status_code=303)
+
+    # Не привязанные (или только отвязанные) пользователи с Telegram
     linked_user_ids = {l.user_id for l in links}
     users_result = await db.execute(
-        select(User).where(User.telegram_id.isnot(None), User.is_active == True)
+        select(User).where(
+            User.telegram_id.isnot(None),
+            User.is_active == True,
+            User.role != "owner",
+        )
     )
     all_tg_users = users_result.scalars().all()
     available_users = [u for u in all_tg_users if u.id not in linked_user_ids]
 
     success = request.session.pop("flash_success", None)
+    error = request.session.pop("flash_error", None)
     return templates.TemplateResponse("sellers.html", {
         "request": request,
         "user": user,
@@ -450,6 +551,7 @@ async def sellers_page(request: Request, db: AsyncSession = Depends(get_db)):
         "links": links,
         "available_users": available_users,
         "success": success,
+        "error": error,
     })
 
 
@@ -462,28 +564,34 @@ async def sellers_assign(
     db: AsyncSession = Depends(get_db),
 ):
     current = await get_current_web_user(request, db)
-    if not current:
+    if not current or current.role not in ("owner", "admin"):
         return RedirectResponse("/login", status_code=303)
 
     from app.models.store import StoreUser
+    from app.core.roles import normalize_assign_role, OWNER
 
-    # Проверяем, нет ли уже привязки
+    role = normalize_assign_role(role)
+    u = await db.get(User, user_id)
+    if not u or not u.is_active:
+        request.session["flash_error"] = "Пользователь не найден"
+        return RedirectResponse("/sellers", status_code=303)
+
+    # Глобальная роль (кроме owner)
+    if u.role != OWNER:
+        u.role = role
+
     existing = await db.execute(
         select(StoreUser).where(StoreUser.user_id == user_id, StoreUser.store_id == store_id)
     )
-    if existing.scalar_one_or_none():
-        return RedirectResponse("/sellers", status_code=303)
+    link = existing.scalar_one_or_none()
+    if link:
+        link.is_active = True
+        link.role = role
+    else:
+        db.add(StoreUser(user_id=user_id, store_id=store_id, role=role, is_active=True))
 
-    role = role if role in ("seller", "admin", "warehouse") else "seller"
-    # warehouse видит все склады — глобальная роль на User
-    u = await db.get(User, user_id)
-    if u and role == "warehouse":
-        u.role = "warehouse"
-    elif u and role == "admin":
-        u.role = "admin"
-    link = StoreUser(user_id=user_id, store_id=store_id, role=role, is_active=True)
-    db.add(link)
     await db.commit()
+    request.session["flash_success"] = f"Привязан как «{role}»"
     return RedirectResponse("/sellers", status_code=303)
 
 
@@ -520,24 +628,22 @@ async def sellers_set_role(
     if not current or current.role not in ("owner", "admin"):
         return RedirectResponse("/login", status_code=303)
 
-    role = role if role in ("seller", "admin", "warehouse") else "seller"
+    from app.models.store import StoreUser
+    from app.core.roles import normalize_assign_role, OWNER, ROLE_LABELS
+
+    role = normalize_assign_role(role)
     result = await db.execute(select(StoreUser).where(StoreUser.id == link_id))
     link = result.scalar_one_or_none()
-    if not link:
+    if not link or not link.is_active:
+        request.session["flash_error"] = "Привязка не найдена"
         return RedirectResponse("/sellers", status_code=303)
 
     link.role = role
     u = await db.get(User, link.user_id)
-    if u and u.role != "owner":
-        # глобальная роль для доступа к разделам сайта
-        if role == "warehouse":
-            u.role = "warehouse"
-        elif role == "admin":
-            u.role = "admin"
-        else:
-            u.role = "seller"
+    if u and u.role != OWNER:
+        u.role = role
     await db.commit()
-    request.session["flash_success"] = "Роль обновлена"
+    request.session["flash_success"] = f"Роль: {ROLE_LABELS.get(role, role)}"
     return RedirectResponse("/sellers", status_code=303)
 
 
@@ -1064,7 +1170,7 @@ async def inventory_admin_page(request: Request, db: AsyncSession = Depends(get_
     if not user:
         return RedirectResponse("/login", status_code=303)
     if user.role not in ("owner", "admin"):
-        return RedirectResponse("/inventory/my", status_code=303)
+        return RedirectResponse("/sell/inventory", status_code=303)
 
     from app.models.inventory_task import InventoryTask, InventoryCount, InventoryLine
     from app.models.product import Category
@@ -1295,6 +1401,7 @@ async def warehouse_page(
 
 # ========== Inventory seller flow ==========
 
+@app.get("/sell/inventory", response_class=HTMLResponse)
 @app.get("/inventory/my", response_class=HTMLResponse)
 async def inventory_seller_page(request: Request, db: AsyncSession = Depends(get_db)):
     from datetime import date as date_cls
@@ -1350,9 +1457,11 @@ async def inventory_seller_page(request: Request, db: AsyncSession = Depends(get
                 in_prog.task_title = task.title
                 active_count = in_prog
 
-    return templates.TemplateResponse("inventory_seller.html", {
+    sid2, store_name = await get_seller_store(user, db)
+    return templates.TemplateResponse("sell_inventory.html", {
         "request": request, "user": user, "tasks": tasks_out,
         "active_count": active_count, "error": error, "success": success,
+        "store_name": store_name or "—", "inv_tab": True,
     })
 
 
@@ -1369,10 +1478,10 @@ async def inventory_start(request: Request, task_id: int = Form(...), db: AsyncS
     today = date_cls.today()
     if not task or not sid or task.store_id != sid or not task.is_active:
         request.session["flash_error"] = "Задание недоступно"
-        return RedirectResponse("/inventory/my", status_code=303)
+        return RedirectResponse("/sell/inventory", status_code=303)
     if not (task.date_from <= today <= task.date_to):
         request.session["flash_error"] = "Вне периода инвентаризации"
-        return RedirectResponse("/inventory/my", status_code=303)
+        return RedirectResponse("/sell/inventory", status_code=303)
 
     existing = (await db.execute(
         select(InventoryCount).where(
@@ -1383,7 +1492,7 @@ async def inventory_start(request: Request, task_id: int = Form(...), db: AsyncS
     )).scalar_one_or_none()
     if existing:
         request.session["flash_error"] = "Сегодня уже есть инвентаризация (лимит 1 раз в сутки)"
-        return RedirectResponse("/inventory/my", status_code=303)
+        return RedirectResponse("/sell/inventory", status_code=303)
 
     # variants for categories
     vq = (
@@ -1415,7 +1524,7 @@ async def inventory_start(request: Request, task_id: int = Form(...), db: AsyncS
             variant_info=" / ".join(parts) if parts else None,
         ))
     await db.commit()
-    return RedirectResponse("/inventory/my", status_code=303)
+    return RedirectResponse("/sell/inventory", status_code=303)
 
 
 @app.post("/inventory/submit")
@@ -1434,7 +1543,7 @@ async def inventory_submit(
         return RedirectResponse("/login", status_code=303)
     count = await db.get(InventoryCount, count_id)
     if not count or count.user_id != user.id or count.status == "done":
-        return RedirectResponse("/inventory/my", status_code=303)
+        return RedirectResponse("/sell/inventory", status_code=303)
 
     form = await request.form()
     await db.refresh(count, ["lines"])
@@ -1497,7 +1606,7 @@ async def inventory_submit(
     else:
         await db.commit()
         request.session["flash_success"] = "Черновик сохранён"
-    return RedirectResponse("/inventory/my", status_code=303)
+    return RedirectResponse("/sell/inventory", status_code=303)
 
 
 

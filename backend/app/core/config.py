@@ -1,25 +1,26 @@
-from pydantic_settings import BaseSettings
 from functools import lru_cache
 from pydantic import field_validator
+from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
     BOT_TOKEN: str = ""
-    SECRET_KEY: str = "change-me"
+    SECRET_KEY: str = "change-me-in-production-use-long-random"
     OWNER_PASSWORD: str = "admin123"
     DATABASE_URL: str = "postgresql+asyncpg://cloudvape:cloudvape_secret@db:5432/cloudvape"
-    DEBUG: bool = True
-
-    # JWT
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 дней
+    DEBUG: bool = False
+    # Публичный URL сайта для magic-ссылок из бота (https://xxx.onrender.com)
+    WEB_BASE_URL: str = ""
 
     @field_validator("DATABASE_URL", mode="before")
     @classmethod
     def fix_postgres_url(cls, v: str) -> str:
-        """Render отдаёт postgres://, а нам нужен postgresql+asyncpg://"""
-        if v and v.startswith("postgres://"):
-            v = v.replace("postgres://", "postgresql+asyncpg://", 1)
-        elif v and v.startswith("postgresql://"):
+        if not v:
+            return v
+        # Render/Heroku: postgres:// → postgresql+asyncpg://
+        if v.startswith("postgres://"):
+            v = v.replace("postgres://", "postgresql://", 1)
+        if v.startswith("postgresql://") and "+asyncpg" not in v:
             v = v.replace("postgresql://", "postgresql+asyncpg://", 1)
         return v
 

@@ -1,49 +1,51 @@
 {% extends "base.html" %}
 {% block title %}Вход — CloudVape{% endblock %}
 {% block content %}
-<div class="max-w-md mx-auto mt-12 space-y-6">
-    <div class="bg-white rounded-xl shadow-lg p-8">
-        <h1 class="text-2xl font-bold text-center mb-2">CloudVape</h1>
-        <p class="text-gray-500 text-center mb-6 text-sm">CRM для вейп-шопов</p>
+<div class="min-h-[70vh] flex items-center justify-center">
+    <div class="w-full max-w-md">
+        <div class="text-center mb-8">
+            <div class="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-slate-900 text-white text-xl font-bold mb-3">CV</div>
+            <h1 class="text-2xl font-bold tracking-tight">CloudVape</h1>
+            <p class="text-slate-500 text-sm mt-1">Внутренний учёт магазина</p>
+        </div>
 
-        {% if error %}
-        <div class="bg-red-50 text-red-700 text-sm px-4 py-3 rounded mb-4">{{ error }}</div>
-        {% endif %}
+        <div class="bg-white rounded-3xl shadow-sm border border-slate-100 p-6 sm:p-8 space-y-6">
+            {% if error %}
+            <div class="bg-red-50 text-red-700 text-sm px-4 py-3 rounded-2xl border border-red-100">{{ error }}</div>
+            {% endif %}
 
-        <div class="mb-6 pb-6 border-b">
-            <h2 class="font-semibold mb-2 text-center">Вход через Telegram</h2>
-            <p class="text-xs text-gray-500 text-center mb-3">
-                В боте нажми «🌐 Вход на сайт» → получи код → введи сюда
-            </p>
-            <form method="post" action="/login/telegram" class="space-y-3">
-                <input type="text" name="code" required maxlength="8" pattern="[0-9]{8}"
-                       placeholder="Код из бота (8 цифр)"
-                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-center text-lg tracking-widest focus:outline-none focus:ring-2 focus:ring-slate-500">
-                <button type="submit"
-                        class="w-full bg-blue-600 text-white py-2.5 rounded-lg font-medium hover:bg-blue-700">
-                    Войти по коду
+            <div class="bg-indigo-50 border border-indigo-100 rounded-2xl p-4 text-sm text-indigo-900">
+                <b>Продавцу:</b> открой бота → <b>🌐 Войти на сайт</b> → кнопка <b>«Открыть кассу»</b>.
+                Код ниже — только если ссылка не открылась.
+            </div>
+
+            <div>
+                <h2 class="font-semibold text-center mb-1 text-sm text-slate-600">Запасной код</h2>
+                <form method="post" action="/login/telegram" class="space-y-3 mt-2">
+                    <input type="text" name="code" required maxlength="8" pattern="[0-9]{8}" inputmode="numeric" autocomplete="one-time-code"
+                           placeholder="8 цифр"
+                           class="w-full border border-slate-200 rounded-2xl px-4 py-3 text-center text-xl tracking-[0.3em] font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    <button type="submit" class="w-full bg-slate-800 hover:bg-slate-900 text-white py-3 rounded-2xl font-medium transition text-sm">
+                        Войти по коду
+                    </button>
+                </form>
+            </div>
+
+            <div class="relative">
+                <div class="absolute inset-0 flex items-center"><div class="w-full border-t border-slate-100"></div></div>
+                <div class="relative flex justify-center text-xs"><span class="bg-white px-2 text-slate-400">владелец</span></div>
+            </div>
+
+            <form method="post" action="/login" class="space-y-3">
+                <input type="text" name="username" required placeholder="Логин" autocomplete="username"
+                       class="w-full border border-slate-200 rounded-2xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400">
+                <input type="password" name="password" required placeholder="Пароль" autocomplete="current-password"
+                       class="w-full border border-slate-200 rounded-2xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400">
+                <button type="submit" class="w-full bg-slate-900 text-white py-2.5 rounded-2xl text-sm font-medium">
+                    Войти как владелец
                 </button>
             </form>
         </div>
-
-        <h2 class="font-semibold mb-3 text-center text-sm text-gray-500">Или логин / пароль (владелец)</h2>
-        <form method="post" action="/login" class="space-y-4">
-            <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">Логин</label>
-                <input type="text" name="username" required
-                       class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-slate-500"
-                       placeholder="owner">
-            </div>
-            <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">Пароль</label>
-                <input type="password" name="password" required
-                       class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-slate-500">
-            </div>
-            <button type="submit"
-                    class="w-full bg-slate-900 text-white py-2.5 rounded-lg font-medium hover:bg-slate-800">
-                Войти
-            </button>
-        </form>
     </div>
 </div>
 {% endblock %}

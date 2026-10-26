@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+    <meta name="theme-color" content="#0f172a">
+    <title>Учёт — CloudVape</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+        .safe-bottom { padding-bottom: calc(72px + env(safe-area-inset-bottom)); }
+    </style>
+</head>
+<body class="bg-slate-50 min-h-screen text-slate-900 safe-bottom">
+<header class="bg-slate-900 text-white px-4 py-3 sticky top-0 z-20">
+    <div class="max-w-lg mx-auto">
+        <div class="font-semibold text-sm">Инвентаризация</div>
+        <div class="text-xs text-slate-400">{{ store_name }} · только факт, остатки не меняются</div>
+    </div>
+</header>
+
+<main class="max-w-lg mx-auto p-4 space-y-4">
+    {% if error %}<div class="bg-red-50 text-red-700 border border-red-100 rounded-2xl px-4 py-3 text-sm">{{ error }}</div>{% endif %}
+    {% if success %}<div class="bg-emerald-50 text-emerald-800 border border-emerald-100 rounded-2xl px-4 py-3 text-sm">{{ success }}</div>{% endif %}
+
+    {% if active_count %}
+    <div class="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+        <div class="px-4 py-3 border-b border-slate-100">
+            <div class="font-semibold">{{ active_count.task_title }}</div>
+            <div class="text-xs text-slate-500">Введите фактическое количество</div>
+        </div>
+        <form method="post" action="/inventory/submit">
+            <input type="hidden" name="count_id" value="{{ active_count.id }}">
+            <div class="divide-y divide-slate-100 max-h-[55vh] overflow-y-auto">
+                {% for line in active_count.lines %}
+                <div class="px-4 py-3 flex items-center gap-3">
+                    <div class="flex-1 min-w-0">
+                        <div class="font-medium text-sm truncate">{{ line.product_name }}</div>
+                        <div class="text-xs text-slate-500">{{ line.variant_info or '' }} · план {{ line.system_stock }}</div>
+                    </div>
+                    <input type="number" name="fact_{{ line.id }}" min="0" step="1"
+                           value="{{ line.fact_stock if line.fact_stock is not none else line.system_stock }}"
+                           class="w-20 border border-slate-200 rounded-xl px-2 py-2 text-center text-sm font-semibold focus:ring-2 focus:ring-indigo-500 outline-none">
+                </div>
+                {% endfor %}
+            </div>
+            <div class="p-4 grid grid-cols-2 gap-2 border-t border-slate-100">
+                <button type="submit" name="action" value="save" class="bg-slate-100 text-slate-800 py-3 rounded-2xl text-sm font-medium">Черновик</button>
+                <button type="submit" name="action" value="finish" class="bg-indigo-600 text-white py-3 rounded-2xl text-sm font-bold">Сдать отчёт</button>
+            </div>
+        </form>
+    </div>
+    {% endif %}
+
+    <div class="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+        <div class="px-4 py-3 font-semibold border-b border-slate-100 text-sm">Активные задания</div>
+        {% for task in tasks %}
+        <div class="px-4 py-3 border-b border-slate-50 flex justify-between items-center gap-3">
+            <div>
+                <div class="font-medium text-sm">{{ task.title }}</div>
+                <div class="text-xs text-slate-500">{{ task.date_from.strftime('%d.%m') }}–{{ task.date_to.strftime('%d.%m.%y') }}</div>
+                {% if task.done_today %}<div class="text-xs text-emerald-600 mt-1">Сегодня сдано</div>{% endif %}
+            </div>
+            {% if not task.done_today and task.can_start %}
+            <form method="post" action="/inventory/start">
+                <input type="hidden" name="task_id" value="{{ task.id }}">
+                <button class="bg-slate-900 text-white px-3 py-1.5 rounded-xl text-xs font-medium">Начать</button>
+            </form>
+            {% endif %}
+        </div>
+        {% else %}
+        <div class="px-4 py-10 text-center text-slate-400 text-sm">Нет заданий на сегодня</div>
+        {% endfor %}
+    </div>
+</main>
+
+<nav class="fixed bottom-0 inset-x-0 bg-white border-t border-slate-200 z-30 pb-[env(safe-area-inset-bottom)]">
+    <div class="max-w-lg mx-auto grid grid-cols-3 text-center">
+        <a href="/sell" class="py-3 text-slate-400">
+            <div class="text-lg leading-none">💳</div>
+            <div class="text-[11px] font-medium mt-0.5">Касса</div>
+        </a>
+        <a href="/sell/inventory" class="py-3 text-indigo-600">
+            <div class="text-lg leading-none">📋</div>
+            <div class="text-[11px] font-medium mt-0.5">Учёт</div>
+        </a>
+        <a href="/sell/shift" class="py-3 text-slate-400">
+            <div class="text-lg leading-none">📊</div>
+            <div class="text-[11px] font-medium mt-0.5">Смена</div>
+        </a>
+    </div>
+</nav>
+</body>
+</html>

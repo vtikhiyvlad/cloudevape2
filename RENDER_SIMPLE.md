@@ -64,3 +64,16 @@ Render Free засыпает через ~15 минут без запросов.
 
 Дополнительно в Environment на Render можно указать:
 `KEEP_ALIVE_URL` = `https://ТВОЙ-САЙТ.onrender.com`
+
+
+## Вход продавца в 1 клик
+
+В Environment на Render добавь:
+
+```
+WEB_BASE_URL=https://ТВОЙ-СЕРВИС.onrender.com
+SECRET_KEY=<случайная строка 32+ символов>
+OWNER_PASSWORD=<сложный пароль>
+```
+
+Без `WEB_BASE_URL` бот даст только цифровой код.

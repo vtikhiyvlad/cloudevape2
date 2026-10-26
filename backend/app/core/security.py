@@ -1,32 +1,38 @@
-from datetime import datetime, timedelta, timezone
-from typing import Optional
-from jose import JWTError, jwt
+"""Хеши паролей и безопасные сравнения."""
 from passlib.context import CryptContext
-from app.core.config import get_settings
+import secrets
+import hmac
 
-settings = get_settings()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-ALGORITHM = "HS256"
-
-
-def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(plain, hashed)
 
 
 def get_password_hash(password: str) -> str:
+    # bcrypt лимит 72 байта
+    if len(password.encode("utf-8")) > 72:
+        password = password.encode("utf-8")[:72].decode("utf-8", errors="ignore")
     return pwd_context.hash(password)
 
 
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
-    to_encode = data.copy()
-    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES))
-    to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=ALGORITHM)
-
-
-def decode_token(token: str) -> Optional[dict]:
+def verify_password(plain: str, hashed: str | None) -> bool:
+    if not hashed:
+        return False
     try:
-        return jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
-    except JWTError:
-        return None
+        if len(plain.encode("utf-8")) > 72:
+            plain = plain.encode("utf-8")[:72].decode("utf-8", errors="ignore")
+        return pwd_context.verify(plain, hashed)
+    except Exception:
+        return False
+
+
+def constant_time_equals(a: str, b: str) -> bool:
+    return hmac.compare_digest(a.encode("utf-8"), b.encode("utf-8"))
+
+
+def new_login_token() -> str:
+    """Криптостойкий токен для magic-ссылки."""
+    return secrets.token_urlsafe(32)
+
+
+def new_login_pin() -> str:
+    """8-значный PIN (fallback)."""
+    return f"{secrets.randbelow(100_000_000):08d}"

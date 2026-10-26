@@ -3,157 +3,162 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#0f172a">
     <title>Касса — CloudVape</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
-        .product-card:active { transform: scale(0.97); }
-        #reader { width: 100%; }
+        .product-card:active { transform: scale(0.98); }
+        #reader { width: 100%; border-radius: 12px; overflow: hidden; }
+        .safe-bottom { padding-bottom: calc(72px + env(safe-area-inset-bottom)); }
     </style>
 </head>
-<body class="bg-slate-100 min-h-screen">
-<nav class="bg-slate-900 text-white px-3 py-2.5 flex justify-between items-center sticky top-0 z-20">
-    <div>
-        <div class="font-bold text-sm">☁️ CloudVape Касса</div>
-        <div class="text-xs text-gray-400">{{ store_name }} · {{ user.full_name or user.username }}</div>
+<body class="bg-slate-50 min-h-screen text-slate-900 safe-bottom">
+<!-- Top bar -->
+<header class="bg-slate-900 text-white px-4 py-3 sticky top-0 z-20">
+    <div class="flex justify-between items-center max-w-6xl mx-auto">
+        <div>
+            <div class="font-semibold text-sm tracking-tight">CloudVape</div>
+            <div class="text-xs text-slate-400">{{ store_name }} · {{ user.full_name or user.username }}</div>
+        </div>
+        <div class="flex items-center gap-2">
+            <div class="bg-slate-800 rounded-lg px-2.5 py-1 text-xs">
+                <span class="text-slate-400">Смена</span>
+                <span class="font-semibold ml-1">{{ shift_total | int }}₽</span>
+            </div>
+            <a href="/logout" class="text-xs text-red-400 px-2">Выйти</a>
+        </div>
     </div>
-    <div class="flex gap-2 text-xs items-center">
-        <span class="bg-slate-700 px-2 py-1 rounded">Смена: {{ shift_total | int }}₽</span>
-        <a href="/sell/shift" class="text-gray-300 px-2">Отчёт</a>
-        <a href="/logout" class="text-red-400 px-2">Выйти</a>
-    </div>
-</nav>
+</header>
 
 {% if success %}
-<div class="bg-green-500 text-white text-center py-3 font-medium text-sm" id="successBanner">{{ success }}</div>
-<audio id="beepOk" preload="auto">
-    <source src="data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2teleC4PQpvO8IFtJgA=" type="audio/wav">
-</audio>
-<script>try{document.getElementById('beepOk')&&document.getElementById('beepOk').play()}catch(e){}</script>
+<div class="bg-emerald-500 text-white text-center py-2.5 text-sm font-medium">{{ success }}</div>
 {% endif %}
 {% if error %}
-<div class="bg-red-500 text-white text-center py-3 font-medium text-sm">{{ error }}</div>
+<div class="bg-red-500 text-white text-center py-2.5 text-sm font-medium">{{ error }}</div>
 {% endif %}
 
 <div class="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-5 gap-0 lg:gap-4 lg:p-4">
-    <!-- LEFT: catalog -->
+    <!-- Catalog -->
     <div class="lg:col-span-3 p-3 space-y-3">
-        <!-- Search + barcode -->
         <form method="get" action="/sell" class="flex gap-2">
             <input type="hidden" name="category_id" value="{{ category_id or '' }}">
-            <input type="search" name="q" value="{{ q or '' }}" autofocus
-                   placeholder="Поиск или 📷 скан штрихкода…"
-                   class="flex-1 border border-gray-300 rounded-xl px-4 py-3 text-base shadow-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                   id="searchInput">
-            <button type="submit" class="bg-slate-900 text-white px-4 rounded-xl font-medium">Найти</button>
-            <button type="button" onclick="toggleScanner()" class="bg-blue-600 text-white px-3 rounded-xl text-sm" title="Камера">📷</button>
+            <input type="search" name="q" value="{{ q or '' }}" autofocus id="searchInput"
+                   placeholder="Поиск или 📷 штрихкод"
+                   class="flex-1 bg-white border border-slate-200 rounded-2xl px-4 py-3 text-base shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+            <button type="submit" class="bg-slate-900 text-white px-4 rounded-2xl font-medium text-sm">OK</button>
+            <button type="button" onclick="toggleScanner()" class="bg-indigo-600 text-white w-12 rounded-2xl text-lg" title="Камера">📷</button>
         </form>
 
-        <div id="scannerBox" class="hidden bg-black rounded-xl overflow-hidden">
+        <div id="scannerBox" class="hidden bg-slate-900 rounded-2xl overflow-hidden p-2">
             <div id="reader"></div>
-            <button type="button" onclick="toggleScanner()" class="w-full bg-red-600 text-white py-2 text-sm">Закрыть камеру</button>
+            <button type="button" onclick="toggleScanner()" class="w-full bg-red-500 text-white py-2 text-sm rounded-xl mt-2">Закрыть</button>
         </div>
 
-        <!-- Categories -->
-        <div class="flex gap-2 overflow-x-auto pb-1">
-            <a href="/sell" class="shrink-0 px-3 py-1.5 rounded-full text-sm {% if not category_id %}bg-slate-900 text-white{% else %}bg-white border{% endif %}">Все</a>
+        <div class="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
+            <a href="/sell" class="shrink-0 px-3.5 py-1.5 rounded-full text-sm font-medium {% if not category_id %}bg-slate-900 text-white{% else %}bg-white border border-slate-200 text-slate-600{% endif %}">Все</a>
             {% for c in categories %}
-            <a href="/sell?category_id={{ c.id }}" class="shrink-0 px-3 py-1.5 rounded-full text-sm {% if category_id == c.id %}bg-slate-900 text-white{% else %}bg-white border{% endif %}">{{ c.name }}</a>
+            <a href="/sell?category_id={{ c.id }}" class="shrink-0 px-3.5 py-1.5 rounded-full text-sm font-medium {% if category_id == c.id %}bg-slate-900 text-white{% else %}bg-white border border-slate-200 text-slate-600{% endif %}">{{ c.name }}</a>
             {% endfor %}
         </div>
 
-        <!-- Products grid -->
-        <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
+        <div class="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
             {% for item in products %}
             <form method="post" action="/sell/add" class="product-card">
                 <input type="hidden" name="variant_id" value="{{ item.variant_id }}">
                 <input type="hidden" name="qty" value="1">
-                <button type="submit" class="w-full text-left bg-white rounded-xl p-3 shadow-sm border border-transparent hover:border-blue-400 h-full">
-                    <div class="font-medium text-sm leading-tight mb-1">{{ item.product_name }}</div>
-                    <div class="text-xs text-gray-500 mb-2">
+                <button type="submit" class="w-full text-left bg-white rounded-2xl p-3.5 shadow-sm border border-slate-100 hover:border-indigo-300 h-full transition">
+                    <div class="font-medium text-sm leading-snug mb-1 line-clamp-2">{{ item.product_name }}</div>
+                    <div class="text-xs text-slate-500 mb-3 min-h-[1rem]">
                         {% if item.strength or item.flavor %}
                         {{ item.strength or '' }}{% if item.strength and item.flavor %} · {% endif %}{{ item.flavor or '' }}
-                        {% else %}—{% endif %}
+                        {% endif %}
                     </div>
                     <div class="flex justify-between items-end">
                         <span class="font-bold text-base">{{ item.price | int }}₽</span>
-                        <span class="text-xs {% if item.stock <= 0 %}text-red-600{% elif item.stock <= 3 %}text-yellow-600{% else %}text-green-600{% endif %}">
+                        <span class="text-xs font-medium px-1.5 py-0.5 rounded-md {% if item.stock <= 0 %}bg-red-50 text-red-600{% elif item.stock <= 3 %}bg-amber-50 text-amber-700{% else %}bg-emerald-50 text-emerald-700{% endif %}">
                             {{ item.stock }} шт
                         </span>
                     </div>
-                    {% if item.barcode %}<div class="text-[10px] text-gray-400 mt-1">{{ item.barcode }}</div>{% endif %}
                 </button>
             </form>
             {% else %}
-            <div class="col-span-full bg-white rounded-xl p-8 text-center text-gray-400">
-                {% if q %}Ничего не найдено по «{{ q }}»{% else %}Нет товаров в наличии{% endif %}
+            <div class="col-span-full bg-white rounded-2xl p-10 text-center text-slate-400 text-sm border border-dashed border-slate-200">
+                {% if q %}Ничего не найдено{% else %}Нет товаров в наличии{% endif %}
             </div>
             {% endfor %}
         </div>
     </div>
 
-    <!-- RIGHT: cart -->
-    <div class="lg:col-span-2 lg:sticky lg:top-14 lg:self-start border-t lg:border-t-0 bg-white lg:rounded-xl lg:shadow-sm">
-        <div class="p-4 border-b flex justify-between items-center">
-            <h2 class="font-bold text-lg">Чек</h2>
-            <span class="text-sm text-gray-500">{{ cart|length }} поз.</span>
+    <!-- Cart -->
+    <div class="lg:col-span-2 lg:sticky lg:top-16 lg:self-start bg-white lg:rounded-2xl lg:shadow-sm lg:border lg:border-slate-100 overflow-hidden">
+        <div class="px-4 py-3 border-b border-slate-100 flex justify-between items-center bg-slate-50/80">
+            <h2 class="font-semibold">Чек</h2>
+            <span class="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">{{ cart|length }} поз.</span>
         </div>
-
-        <div class="max-h-64 lg:max-h-[50vh] overflow-y-auto divide-y">
+        <div class="max-h-56 lg:max-h-[45vh] overflow-y-auto divide-y divide-slate-100">
             {% for item in cart %}
             <div class="px-4 py-3 flex gap-2 items-center">
                 <div class="flex-1 min-w-0">
                     <div class="font-medium text-sm truncate">{{ item.name }}</div>
-                    <div class="text-xs text-gray-500">{{ item.price | int }}₽</div>
+                    <div class="text-xs text-slate-500">{{ item.price | int }}₽</div>
                 </div>
                 <form method="post" action="/sell/cart-qty" class="flex items-center gap-1">
                     <input type="hidden" name="index" value="{{ loop.index0 }}">
-                    <button name="action" value="minus" class="w-8 h-8 rounded-lg bg-gray-100 font-bold">−</button>
-                    <span class="w-6 text-center font-medium">{{ item.qty }}</span>
-                    <button name="action" value="plus" class="w-8 h-8 rounded-lg bg-gray-100 font-bold">+</button>
+                    <button name="action" value="minus" class="w-8 h-8 rounded-xl bg-slate-100 font-bold text-slate-700">−</button>
+                    <span class="w-6 text-center font-semibold text-sm">{{ item.qty }}</span>
+                    <button name="action" value="plus" class="w-8 h-8 rounded-xl bg-slate-100 font-bold text-slate-700">+</button>
                 </form>
-                <div class="w-16 text-right font-medium text-sm">{{ (item.price * item.qty) | int }}₽</div>
+                <div class="w-14 text-right font-semibold text-sm">{{ (item.price * item.qty) | int }}₽</div>
                 <form method="post" action="/sell/cart-remove">
                     <input type="hidden" name="index" value="{{ loop.index0 }}">
-                    <button class="text-red-400 text-lg px-1">×</button>
+                    <button class="text-slate-300 hover:text-red-500 text-lg leading-none px-1">×</button>
                 </form>
             </div>
             {% else %}
-            <div class="px-4 py-10 text-center text-gray-400 text-sm">Добавьте товары из списка или отсканируйте штрихкод</div>
+            <div class="px-4 py-12 text-center text-slate-400 text-sm">Добавьте товар или отсканируйте код</div>
             {% endfor %}
         </div>
-
-        <div class="p-4 border-t space-y-3 bg-slate-50">
-            <div class="flex justify-between text-xl font-bold">
+        <div class="p-4 border-t border-slate-100 space-y-2.5 bg-slate-50/50">
+            <div class="flex justify-between text-lg font-bold">
                 <span>Итого</span>
                 <span>{{ cart_total | int }} ₽</span>
             </div>
             {% if cart and cart|length > 0 %}
             <form method="post" action="/sell/checkout">
-                <button type="submit" class="w-full bg-green-600 hover:bg-green-700 text-white py-4 rounded-xl text-lg font-bold shadow">
-                    ✅ Оплатить {{ cart_total | int }} ₽
+                <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white py-3.5 rounded-2xl text-base font-bold shadow-sm transition">
+                    Оплатить {{ cart_total | int }} ₽
                 </button>
             </form>
             <form method="post" action="/sell/clear-cart">
-                <button type="submit" class="w-full text-red-500 text-sm py-2">Очистить чек</button>
+                <button type="submit" class="w-full text-slate-400 text-xs py-1">Очистить</button>
             </form>
             {% endif %}
         </div>
     </div>
 </div>
 
-<script>
-// USB-сканер штрихкодов: быстрый ввод + Enter
-const input = document.getElementById('searchInput');
-if (input) {
-    input.addEventListener('keydown', function(e) {
-        if (e.key === 'Enter') {
-            e.target.form.submit();
-        }
-    });
-}
+<!-- Bottom nav (seller workspace) -->
+<nav class="fixed bottom-0 inset-x-0 bg-white border-t border-slate-200 z-30 pb-[env(safe-area-inset-bottom)]">
+    <div class="max-w-lg mx-auto grid grid-cols-3 text-center">
+        <a href="/sell" class="py-3 {% if not inv_tab %}text-indigo-600{% else %}text-slate-400{% endif %}">
+            <div class="text-lg leading-none">💳</div>
+            <div class="text-[11px] font-medium mt-0.5">Касса</div>
+        </a>
+        <a href="/sell/inventory" class="py-3 {% if inv_tab %}text-indigo-600{% else %}text-slate-400{% endif %}">
+            <div class="text-lg leading-none">📋</div>
+            <div class="text-[11px] font-medium mt-0.5">Учёт</div>
+        </a>
+        <a href="/sell/shift" class="py-3 text-slate-400">
+            <div class="text-lg leading-none">📊</div>
+            <div class="text-[11px] font-medium mt-0.5">Смена</div>
+        </a>
+    </div>
+</nav>
 
+<script>
+const input = document.getElementById('searchInput');
 let html5QrCode = null;
 async function toggleScanner() {
     const box = document.getElementById('scannerBox');
@@ -162,17 +167,14 @@ async function toggleScanner() {
         html5QrCode = new Html5Qrcode("reader");
         html5QrCode.start(
             { facingMode: "environment" },
-            { fps: 10, qrbox: { width: 250, height: 150 } },
+            { fps: 10, qrbox: { width: 250, height: 120 } },
             (decoded) => {
                 html5QrCode.stop();
                 box.classList.add('hidden');
                 window.location.href = '/sell?q=' + encodeURIComponent(decoded);
             },
             () => {}
-        ).catch(err => {
-            alert('Камера недоступна: ' + err);
-            box.classList.add('hidden');
-        });
+        ).catch(err => { alert('Камера: ' + err); box.classList.add('hidden'); });
     } else {
         if (html5QrCode) try { await html5QrCode.stop(); } catch(e) {}
         box.classList.add('hidden');

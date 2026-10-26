@@ -3,31 +3,50 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Моя смена — CloudVape</title>
+    <title>Смена — CloudVape</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+        .safe-bottom { padding-bottom: calc(72px + env(safe-area-inset-bottom)); }
+    </style>
 </head>
-<body class="bg-gray-100 min-h-screen">
-    <nav class="bg-slate-900 text-white px-4 py-3 flex justify-between items-center">
-        <div class="font-bold">Моя смена</div>
-        <a href="/sell" class="text-sm text-gray-300">← К продажам</a>
-    </nav>
-    <main class="max-w-lg mx-auto px-3 py-6">
-        <div class="bg-white rounded-xl shadow-sm p-6 mb-4 text-center">
-            <div class="text-sm text-gray-500 mb-1">Продаж сегодня</div>
-            <div class="text-3xl font-bold">{{ count }}</div>
-            <div class="text-sm text-gray-500 mt-3 mb-1">Сумма</div>
-            <div class="text-3xl font-bold text-green-600">{{ total | int }} ₽</div>
+<body class="bg-slate-50 min-h-screen safe-bottom">
+<header class="bg-slate-900 text-white px-4 py-3">
+    <div class="max-w-lg mx-auto font-semibold text-sm">Моя смена</div>
+</header>
+<main class="max-w-lg mx-auto px-4 py-6">
+    <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 mb-4 text-center">
+        <div class="text-xs text-slate-500 mb-1">Чеков сегодня</div>
+        <div class="text-3xl font-bold">{{ count }}</div>
+        <div class="text-xs text-slate-500 mt-4 mb-1">Сумма</div>
+        <div class="text-3xl font-bold text-emerald-600">{{ total | int }} ₽</div>
+    </div>
+    <div class="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+        {% for s in sales %}
+        <div class="px-4 py-3 border-b border-slate-50 flex justify-between text-sm">
+            <span class="text-slate-500">{{ s.created_at.strftime('%H:%M') }} · №{{ s.id }}</span>
+            <span class="font-semibold">{{ s.total_amount | int }} ₽</span>
         </div>
-        <div class="bg-white rounded-xl shadow-sm overflow-hidden">
-            {% for s in sales %}
-            <div class="px-4 py-3 border-b flex justify-between text-sm">
-                <span class="text-gray-500">{{ s.created_at.strftime('%H:%M') }} · №{{ s.id }}</span>
-                <span class="font-medium">{{ s.total_amount | int }} ₽</span>
-            </div>
-            {% else %}
-            <div class="px-4 py-8 text-center text-gray-400">Продаж пока нет</div>
-            {% endfor %}
-        </div>
-    </main>
+        {% else %}
+        <div class="px-4 py-10 text-center text-slate-400 text-sm">Продаж пока нет</div>
+        {% endfor %}
+    </div>
+</main>
+<nav class="fixed bottom-0 inset-x-0 bg-white border-t border-slate-200 z-30 pb-[env(safe-area-inset-bottom)]">
+    <div class="max-w-lg mx-auto grid grid-cols-3 text-center">
+        <a href="/sell" class="py-3 text-slate-400">
+            <div class="text-lg leading-none">💳</div>
+            <div class="text-[11px] font-medium mt-0.5">Касса</div>
+        </a>
+        <a href="/sell/inventory" class="py-3 text-slate-400">
+            <div class="text-lg leading-none">📋</div>
+            <div class="text-[11px] font-medium mt-0.5">Учёт</div>
+        </a>
+        <a href="/sell/shift" class="py-3 text-indigo-600">
+            <div class="text-lg leading-none">📊</div>
+            <div class="text-[11px] font-medium mt-0.5">Смена</div>
+        </a>
+    </div>
+</nav>
 </body>
 </html>

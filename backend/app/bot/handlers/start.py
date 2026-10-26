@@ -1,16 +1,18 @@
 from aiogram import Router, F
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import CommandStart, Command
 from sqlalchemy import select
 from datetime import datetime, timezone, timedelta
-import secrets
 
 from app.core.database import AsyncSessionLocal
+from app.core.config import get_settings
+from app.core.security import new_login_token, new_login_pin
 from app.models.user import User
 from app.models.store import StoreUser, Store
 from app.models.login_code import LoginCode
 
 router = Router()
+settings = get_settings()
 
 
 def main_keyboard():
@@ -45,11 +47,9 @@ async def cmd_start(message: Message):
             await session.commit()
             await message.answer(
                 f"Привет, {full_name}!\n\n"
-                "Ты зарегистрирован в CloudVape.\n"
-                f"Твой Telegram ID: <code>{tg_id}</code>\n\n"
-                "Передай ID администратору — он привяжет тебя к магазину.\n\n"
-                "Продажи и инвентаризация — только на <b>сайте</b>.\n"
-                "Кнопка «🌐 Войти на сайт» выдаёт код для входа.",
+                f"ID: <code>{tg_id}</code>\n"
+                "Передай его админу для привязки к магазину.\n\n"
+                "После привязки нажми <b>🌐 Войти на сайт</b> — откроется касса одной кнопкой.",
                 reply_markup=main_keyboard(),
             )
             return
@@ -67,10 +67,9 @@ async def cmd_start(message: Message):
 
         if not links:
             await message.answer(
-                f"Привет, {user.full_name}!\n\n"
-                f"Telegram ID: <code>{tg_id}</code>\n"
-                "Админ ещё не привязал тебя к магазину.\n\n"
-                "После привязки — «🌐 Войти на сайт».",
+                f"Привет, {user.full_name}!\n"
+                f"ID: <code>{tg_id}</code>\n"
+                "Админ ещё не привязал тебя к магазину.",
                 reply_markup=main_keyboard(),
             )
             return
@@ -79,23 +78,23 @@ async def cmd_start(message: Message):
         await message.answer(
             f"Привет, <b>{user.full_name}</b>!\n"
             f"Магазин: <b>{store_names}</b>\n\n"
-            "Продажи и инвентаризация — на сайте.\n"
-            "Нажми «🌐 Войти на сайт» → код → веб-касса.",
+            "Нажми <b>🌐 Войти на сайт</b> — одна кнопка, без ввода кода.",
             reply_markup=main_keyboard(),
         )
 
 
 @router.message(F.text == "🌐 Войти на сайт")
 @router.message(Command("web"))
-async def web_login_code(message: Message):
+async def web_login(message: Message):
     tg_id = message.from_user.id
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(User).where(User.telegram_id == tg_id))
         user = result.scalar_one_or_none()
-        if not user:
-            await message.answer("Сначала нажми /start")
+        if not user or not user.is_active:
+            await message.answer("Сначала /start")
             return
 
+        # антиспам 20 сек
         recent = await session.execute(
             select(LoginCode)
             .where(LoginCode.user_id == user.id)
@@ -105,8 +104,8 @@ async def web_login_code(message: Message):
         last = recent.scalar_one_or_none()
         if last and last.created_at:
             created = last.created_at if last.created_at.tzinfo else last.created_at.replace(tzinfo=timezone.utc)
-            if datetime.now(timezone.utc) - created < timedelta(seconds=30):
-                await message.answer("Подожди 30 секунд перед новым кодом.")
+            if datetime.now(timezone.utc) - created < timedelta(seconds=20):
+                await message.answer("Подожди пару секунд…")
                 return
 
         old = await session.execute(
@@ -115,37 +114,43 @@ async def web_login_code(message: Message):
         for c in old.scalars().all():
             c.used = True
 
-        code = f"{secrets.randbelow(100_000_000):08d}"
-        session.add(LoginCode(
-            user_id=user.id,
-            code=code,
-            expires_at=datetime.now(timezone.utc) + timedelta(minutes=3),
-            used=False,
-        ))
+        token = new_login_token()
+        pin = new_login_pin()
+        exp = datetime.now(timezone.utc) + timedelta(minutes=3)
+
+        session.add(LoginCode(user_id=user.id, code=token, expires_at=exp, used=False))
+        session.add(LoginCode(user_id=user.id, code=pin, expires_at=exp, used=False))
         await session.commit()
 
-    await message.answer(
-        f"🔐 <b>Код входа на сайт</b>\n\n"
-        f"<code>{code}</code>\n\n"
-        f"Действует <b>3 минуты</b>, один раз.\n\n"
-        f"1. Открой сайт CloudVape\n"
-        f"2. «Войти через Telegram»\n"
-        f"3. Введи код\n\n"
-        f"Никому не пересылай."
-    )
+    base = (settings.WEB_BASE_URL or "").rstrip("/")
+    if base:
+        url = f"{base}/auth/magic?t={token}"
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🚀 Открыть кассу", url=url)]
+        ])
+        await message.answer(
+            "Нажми кнопку — сразу попадёшь в кассу.\n"
+            f"Ссылка действует <b>3 минуты</b>.\n\n"
+            f"Запасной код (если кнопка не откроется): <code>{pin}</code>",
+            reply_markup=kb,
+        )
+    else:
+        await message.answer(
+            f"🔐 Код входа: <code>{pin}</code>\n"
+            f"3 минуты, один раз.\n\n"
+            f"<i>Админу: задайте WEB_BASE_URL в Render, чтобы появилась кнопка «Открыть кассу».</i>"
+        )
 
 
 @router.message(F.text == "ℹ️ Помощь")
 @router.message(Command("help"))
 async def help_cmd(message: Message):
     await message.answer(
-        "<b>CloudVape — бот</b>\n\n"
-        "• Регистрация продавца\n"
-        "• Код входа на сайт\n"
-        "• Админу сюда приходят отчёты\n\n"
-        "Продажи и инвентаризация — только в веб-версии.\n\n"
-        "/start — регистрация\n"
-        "/web — код входа"
+        "<b>CloudVape</b>\n\n"
+        "1. /start\n"
+        "2. Админ привязывает к магазину\n"
+        "3. «Войти на сайт» → кнопка «Открыть кассу»\n\n"
+        "Продажи только на сайте."
     )
 
 
@@ -154,7 +159,4 @@ async def help_cmd(message: Message):
     "📋 Инвентаризация", "🌐 Открыть веб-кассу",
 }))
 async def removed_features(message: Message):
-    await message.answer(
-        "Продажи перенесены на сайт.\n"
-        "Нажми «🌐 Войти на сайт»."
-    )
+    await message.answer("Используй «🌐 Войти на сайт».")
