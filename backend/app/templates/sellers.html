@@ -31,7 +31,8 @@
         <select name="role" class="border border-gray-300 rounded-lg px-3 py-2 text-sm">
             <option value="seller">Продавец</option>
             <option value="admin">Админ магазина</option>
-            <option value="warehouse">Склад (все магазины)</option>
+            <option value="warehouse">Склад (только товары)</option>
+            <option value="owner">Владелец</option>
         </select>
         <button type="submit" class="bg-slate-900 text-white px-4 py-2 rounded-lg text-sm hover:bg-slate-800">
             Привязать
@@ -63,6 +64,7 @@
                             <option value="seller" {% if link.role == 'seller' %}selected{% endif %}>Продавец</option>
                             <option value="admin" {% if link.role == 'admin' %}selected{% endif %}>Админ магазина</option>
                             <option value="warehouse" {% if link.role == 'warehouse' %}selected{% endif %}>Склад</option>
+                            <option value="owner" {% if link.role == 'owner' %}selected{% endif %}>Владелец</option>
                         </select>
                         <button type="submit" class="text-blue-600 hover:underline text-sm whitespace-nowrap">Сохранить</button>
                     </form>

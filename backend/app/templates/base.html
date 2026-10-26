@@ -16,24 +16,31 @@
         <div class="max-w-6xl mx-auto flex flex-wrap justify-between items-center gap-2">
             <div class="flex flex-wrap items-center gap-3 sm:gap-4">
                 <a href="/" class="text-lg font-bold tracking-tight">CloudVape</a>
-                {% if user.role in ['owner', 'admin'] %}
+
+                {% if user.role in ['sysadmin', 'owner'] %}
                 <a href="/stores" class="text-slate-300 hover:text-white text-sm">Магазины</a>
                 <a href="/products" class="text-slate-300 hover:text-white text-sm">Товары</a>
                 <a href="/sellers" class="text-slate-300 hover:text-white text-sm">Продавцы</a>
                 <a href="/sales" class="text-slate-300 hover:text-white text-sm">Продажи</a>
                 <a href="/inventory" class="text-slate-300 hover:text-white text-sm">Инвентаризации</a>
                 <a href="/warehouse" class="text-slate-300 hover:text-white text-sm">Склады</a>
-                {% endif %}
-                {% if user.role == 'warehouse' %}
-                <a href="/warehouse" class="text-slate-300 hover:text-white text-sm">Склады</a>
-                {% endif %}
-                {% if user.role in ['owner', 'admin', 'seller'] %}
+                <a href="/sell" class="text-indigo-300 hover:text-white text-sm font-medium">Касса</a>
+                {% elif user.role == 'admin' %}
+                <a href="/products" class="text-slate-300 hover:text-white text-sm">Товары</a>
+                <a href="/sellers" class="text-slate-300 hover:text-white text-sm">Продавцы</a>
+                <a href="/sales" class="text-slate-300 hover:text-white text-sm">Продажи</a>
+                <a href="/inventory" class="text-slate-300 hover:text-white text-sm">Инвентаризации</a>
+                <a href="/sell" class="text-indigo-300 hover:text-white text-sm font-medium">Касса</a>
+                {% elif user.role == 'warehouse' %}
+                <a href="/products" class="text-slate-300 hover:text-white text-sm">Товары</a>
+                <a href="/warehouse" class="text-slate-300 hover:text-white text-sm">Остатки</a>
+                {% elif user.role == 'seller' %}
                 <a href="/sell" class="text-indigo-300 hover:text-white text-sm font-medium">Касса</a>
                 {% endif %}
             </div>
             <div class="flex items-center gap-3 text-sm">
-                <span class="text-slate-400 hidden sm:inline truncate max-w-[120px]">{{ user.full_name or user.username }}</span>
-                {% if user.role == 'owner' %}
+                <span class="text-slate-400 hidden sm:inline truncate max-w-[140px]">{{ user.full_name or user.username }} · {{ user.role }}</span>
+                {% if user.role in ['sysadmin', 'owner'] %}
                 <a href="/settings" class="text-slate-300 hover:text-white text-sm">Настройки</a>
                 {% endif %}
                 <a href="/logout" class="text-red-400 hover:text-red-300">Выйти</a>

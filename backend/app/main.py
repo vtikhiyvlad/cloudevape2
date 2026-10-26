@@ -36,13 +36,13 @@ async def create_owner_if_not_exists():
             owner = User(
                 full_name="Владелец",
                 username="owner",
-                role="owner",
+                role="sysadmin",
                 password_hash=get_password_hash(settings.OWNER_PASSWORD),
                 is_active=True,
             )
             session.add(owner)
             await session.commit()
-            print("✅ Создан владелец системы (логин: owner)")
+            print("✅ Создан сисадмин (env login) (логин: owner)")
 
 
 
@@ -79,6 +79,19 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             print("barcode migrate:", e)
     await create_owner_if_not_exists()
+    # авто-закрытие просроченных инвентаризаций
+    try:
+        from datetime import date as date_cls
+        from app.models.inventory_task import InventoryTask
+        async with AsyncSessionLocal() as s:
+            await s.execute(
+                __import__("sqlalchemy", fromlist=["text"]).text(
+                    "UPDATE inventory_tasks SET is_active = false WHERE date_to < CURRENT_DATE AND is_active = true"
+                )
+            )
+            await s.commit()
+    except Exception as e:
+        print("inventory autoclose:", e)
     print("🚀 CloudVape backend запущен")
     asyncio.create_task(keep_alive_loop())
     yield
@@ -152,31 +165,16 @@ async def health():
 
 
 @app.get("/", response_class=HTMLResponse)
-async def dashboard(request: Request, db: AsyncSession = Depends(get_db)):
+async def home(request: Request, db: AsyncSession = Depends(get_db)):
     user = await get_current_web_user(request, db)
     if not user:
         return RedirectResponse("/login", status_code=303)
     if user.role == "seller":
         return RedirectResponse("/sell", status_code=303)
+    if user.role == "warehouse":
+        return RedirectResponse("/products", status_code=303)
+    return templates.TemplateResponse("dashboard.html", {"request": request, "user": user})
 
-    stores_count = (await db.execute(select(func.count(Store.id)).where(Store.is_active == True))).scalar() or 0
-
-    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    sales_q = await db.execute(
-        select(func.count(Sale.id), func.coalesce(func.sum(Sale.total_amount), 0))
-        .where(Sale.created_at >= today_start)
-    )
-    row = sales_q.one()
-    sales_today = row[0] or 0
-    revenue_today = int(row[1] or 0)
-
-    return templates.TemplateResponse("dashboard.html", {
-        "request": request,
-        "user": user,
-        "stores_count": stores_count,
-        "sales_today": sales_today,
-        "revenue_today": revenue_today,
-    })
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -275,7 +273,7 @@ async def login_telegram(
 
 
 @app.get("/auth/magic")
-async def auth_magic(request: Request, t: str = "", db: AsyncSession = Depends(get_db)):
+async def auth_magic(request: Request, t: str = "", to: str = "sell", db: AsyncSession = Depends(get_db)):
     """Вход в 1 клик по ссылке из Telegram-бота."""
     from app.models.login_code import LoginCode
     from app.core.rate_limit import is_allowed
@@ -323,10 +321,13 @@ async def auth_magic(request: Request, t: str = "", db: AsyncSession = Depends(g
     request.session["user_id"] = user.id
     request.session["login_at"] = datetime.now(timezone.utc).isoformat()
 
-    if user.role in ("seller", "admin"):
+    dest = (to or "sell").strip().lower()
+    if dest == "admin" and user.role in ("sysadmin", "owner", "admin"):
+        return RedirectResponse("/", status_code=303)
+    if dest == "warehouse" or user.role == "warehouse":
+        return RedirectResponse("/products", status_code=303)
+    if dest == "sell" or user.role in ("seller", "admin", "owner", "sysadmin"):
         return RedirectResponse("/sell", status_code=303)
-    if user.role == "warehouse":
-        return RedirectResponse("/warehouse", status_code=303)
     return RedirectResponse("/", status_code=303)
 
 
@@ -454,6 +455,8 @@ async def sales_page(
     user = await get_current_web_user(request, db)
     if not user:
         return RedirectResponse("/login", status_code=303)
+    if user.role not in ("sysadmin", "owner", "admin"):
+        return RedirectResponse("/", status_code=303)
 
     stores_result = await db.execute(select(Store).where(Store.is_active == True).order_by(Store.name))
     stores_list = stores_result.scalars().all()
@@ -527,7 +530,7 @@ async def sellers_page(request: Request, db: AsyncSession = Depends(get_db)):
     )
     links = links_result.scalars().all()
 
-    if user.role not in ("owner", "admin"):
+    if user.role not in ("sysadmin", "owner", "admin"):
         return RedirectResponse("/", status_code=303)
 
     # Не привязанные (или только отвязанные) пользователи с Telegram
@@ -564,7 +567,7 @@ async def sellers_assign(
     db: AsyncSession = Depends(get_db),
 ):
     current = await get_current_web_user(request, db)
-    if not current or current.role not in ("owner", "admin"):
+    if not current or current.role not in ("sysadmin", "owner", "admin"):
         return RedirectResponse("/login", status_code=303)
 
     from app.models.store import StoreUser
@@ -625,7 +628,7 @@ async def sellers_set_role(
     db: AsyncSession = Depends(get_db),
 ):
     current = await get_current_web_user(request, db)
-    if not current or current.role not in ("owner", "admin"):
+    if not current or current.role not in ("sysadmin", "owner", "admin"):
         return RedirectResponse("/login", status_code=303)
 
     from app.models.store import StoreUser
@@ -1231,40 +1234,87 @@ async def inventory_admin_page(request: Request, db: AsyncSession = Depends(get_
 async def inventory_create(
     request: Request,
     title: str = Form("Инвентаризация"),
-    store_id: int = Form(...),
+    store_id: str = Form(...),  # "all" или id
     date_from: str = Form(...),
     date_to: str = Form(...),
     db: AsyncSession = Depends(get_db),
 ):
     user = await get_current_web_user(request, db)
-    if not user or user.role not in ("owner", "admin"):
+    if not user or user.role not in ("sysadmin", "owner", "admin"):
         return RedirectResponse("/login", status_code=303)
 
     from app.models.inventory_task import InventoryTask
+    from app.models.product import Category
+    from app.models.store import StoreUser
+    from app.services.notify import send_telegram_message
     from datetime import date as date_cls
 
     form = await request.form()
     cat_ids = form.getlist("category_ids")
     cat_str = ",".join(cat_ids) if cat_ids else None
+    df = date_cls.fromisoformat(date_from)
+    dt = date_cls.fromisoformat(date_to)
+    title_clean = title.strip() or "Инвентаризация"
 
-    task = InventoryTask(
-        store_id=store_id,
-        title=title.strip() or "Инвентаризация",
-        date_from=date_cls.fromisoformat(date_from),
-        date_to=date_cls.fromisoformat(date_to),
-        category_ids=cat_str,
-        created_by=user.id,
-        is_active=True,
-    )
-    db.add(task)
+    if store_id == "all":
+        stores = (await db.execute(select(Store).where(Store.is_active == True))).scalars().all()
+        store_ids = [s.id for s in stores]
+    else:
+        store_ids = [int(store_id)]
+
+    created_tasks = []
+    for sid in store_ids:
+        task = InventoryTask(
+            store_id=sid,
+            title=title_clean,
+            date_from=df,
+            date_to=dt,
+            category_ids=cat_str,
+            created_by=user.id,
+            is_active=True,
+        )
+        db.add(task)
+        created_tasks.append((task, sid))
+    await db.flush()
+
+    # labels for notify
+    cat_names = "все группы"
+    if cat_str:
+        ids = [int(x) for x in cat_str.split(",") if x.strip().isdigit()]
+        if ids:
+            cr = await db.execute(select(Category).where(Category.id.in_(ids)))
+            cat_names = ", ".join(c.name for c in cr.scalars().all()) or cat_names
+    period = f"{df.strftime('%d.%m.%y')}–{dt.strftime('%d.%m.%y')}"
+
+    # notify sellers of those stores
+    for task, sid in created_tasks:
+        store = await db.get(Store, sid)
+        store_name = store.name if store else "—"
+        links = (await db.execute(
+            select(StoreUser).where(StoreUser.store_id == sid, StoreUser.is_active == True)
+        )).scalars().all()
+        for link in links:
+            su = await db.get(User, link.user_id)
+            if su and su.telegram_id and su.role in ("seller", "admin", "owner"):
+                await send_telegram_message(
+                    su.telegram_id,
+                    f"📋 <b>Назначена инвентаризация</b>\n"
+                    f"Магазин: {store_name}\n"
+                    f"Период: {period}\n"
+                    f"Группы: {cat_names}\n\n"
+                    f"Зайди в кассу → вкладка «Учёт».",
+                )
+
     await db.commit()
+    request.session["flash_success"] = f"Назначено: {len(created_tasks)} магазин(ов), уведомления отправлены"
     return RedirectResponse("/inventory", status_code=303)
+
 
 
 @app.get("/inventory/report/{count_id}", response_class=HTMLResponse)
 async def inventory_report(request: Request, count_id: int, db: AsyncSession = Depends(get_db)):
     user = await get_current_web_user(request, db)
-    if not user or user.role not in ("owner", "admin"):
+    if not user or user.role not in ("sysadmin", "owner", "admin"):
         return RedirectResponse("/login", status_code=303)
 
     from app.models.inventory_task import InventoryCount, InventoryTask
@@ -1304,7 +1354,7 @@ async def inventory_report(request: Request, count_id: int, db: AsyncSession = D
 async def inventory_apply(request: Request, count_id: int, db: AsyncSession = Depends(get_db)):
     """Только owner/admin применяет остатки по факту"""
     user = await get_current_web_user(request, db)
-    if not user or user.role not in ("owner", "admin"):
+    if not user or user.role not in ("sysadmin", "owner", "admin"):
         return RedirectResponse("/login", status_code=303)
 
     from app.models.inventory_task import InventoryCount

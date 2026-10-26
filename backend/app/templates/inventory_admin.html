@@ -6,52 +6,53 @@
 </div>
 
 {% if success %}
-<div class="bg-green-100 text-green-800 px-4 py-3 rounded-lg mb-4 text-sm">{{ success }}</div>
+<div class="bg-emerald-50 text-emerald-800 border border-emerald-100 px-4 py-3 rounded-2xl mb-4 text-sm">{{ success }}</div>
 {% endif %}
 
-<div class="bg-white rounded-xl shadow-sm p-6 mb-6">
-    <h2 class="font-semibold mb-3">Назначить инвентаризацию</h2>
-    <p class="text-sm text-gray-500 mb-4">
-        Продавцы вводят только факт. Остатки меняет только владелец/админ после проверки отчёта.
+<div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 mb-6">
+    <h2 class="font-semibold mb-3">Назначить</h2>
+    <p class="text-sm text-slate-500 mb-4">
+        Можно на один магазин или сразу на все. Продавцам уйдёт уведомление в Telegram.
+        После даты окончания задание закроется само.
     </p>
     <form method="post" action="/inventory/create" class="space-y-3">
         <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
             <input type="text" name="title" value="Инвентаризация" placeholder="Название"
-                   class="border border-gray-300 rounded-lg px-3 py-2 text-sm">
-            <select name="store_id" required class="border border-gray-300 rounded-lg px-3 py-2 text-sm">
-                <option value="">— магазин —</option>
+                   class="border border-slate-200 rounded-xl px-3 py-2 text-sm">
+            <select name="store_id" required class="border border-slate-200 rounded-xl px-3 py-2 text-sm">
+                <option value="all">Все магазины</option>
                 {% for s in stores %}
                 <option value="{{ s.id }}">{{ s.name }}</option>
                 {% endfor %}
             </select>
             <div>
-                <label class="text-xs text-gray-500">С даты</label>
-                <input type="date" name="date_from" required class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                <label class="text-xs text-slate-500">С даты</label>
+                <input type="date" name="date_from" required class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm">
             </div>
             <div>
-                <label class="text-xs text-gray-500">По дату</label>
-                <input type="date" name="date_to" required class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                <label class="text-xs text-slate-500">По дату</label>
+                <input type="date" name="date_to" required class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm">
             </div>
         </div>
         <div>
-            <label class="text-xs text-gray-500">Категории / группы (пусто = все)</label>
+            <label class="text-xs text-slate-500">Категории (пусто = все)</label>
             <div class="flex flex-wrap gap-2 mt-1">
                 {% for c in all_categories %}
-                <label class="text-sm bg-gray-50 border rounded-lg px-2 py-1">
+                <label class="text-sm bg-slate-50 border border-slate-200 rounded-xl px-2 py-1">
                     <input type="checkbox" name="category_ids" value="{{ c.id }}"> {{ c.name }}
-                    <span class="text-gray-400 text-xs">({{ c.store_name }})</span>
+                    <span class="text-slate-400 text-xs">({{ c.store_name }})</span>
                 </label>
                 {% endfor %}
             </div>
         </div>
-        <button type="submit" class="bg-slate-900 text-white px-5 py-2 rounded-lg text-sm">Назначить</button>
+        <button type="submit" class="bg-slate-900 text-white px-5 py-2.5 rounded-xl text-sm font-medium">Назначить</button>
     </form>
 </div>
 
-<h2 class="font-semibold mb-3">Активные задания</h2>
-<div class="bg-white rounded-xl shadow-sm overflow-hidden mb-8">
+<h2 class="font-semibold mb-3">Активные / недавние задания</h2>
+<div class="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden mb-8">
     <table class="w-full text-sm">
-        <thead class="bg-gray-50 text-left">
+        <thead class="bg-slate-50 text-left">
             <tr>
                 <th class="px-4 py-3">Период</th>
                 <th class="px-4 py-3">Магазин</th>
@@ -59,28 +60,28 @@
                 <th class="px-4 py-3">Статус</th>
             </tr>
         </thead>
-        <tbody class="divide-y">
+        <tbody class="divide-y divide-slate-100">
             {% for t in tasks %}
             <tr>
                 <td class="px-4 py-3 font-medium">{{ t.date_from.strftime('%d.%m.%y') }}–{{ t.date_to.strftime('%d.%m.%y') }}</td>
                 <td class="px-4 py-3">{{ t.store_name }}</td>
-                <td class="px-4 py-3 text-gray-600">{{ t.cats_label }}</td>
-                <td class="px-4 py-3">{% if t.is_active %}<span class="text-green-600">Активна</span>{% else %}Закрыта{% endif %}</td>
+                <td class="px-4 py-3 text-slate-600">{{ t.cats_label }}</td>
+                <td class="px-4 py-3">{% if t.is_active %}<span class="text-emerald-600">Активна</span>{% else %}<span class="text-slate-400">Закрыта</span>{% endif %}</td>
             </tr>
             {% else %}
-            <tr><td colspan="4" class="px-4 py-6 text-center text-gray-400">Нет заданий</td></tr>
+            <tr><td colspan="4" class="px-4 py-6 text-center text-slate-400">Нет заданий</td></tr>
             {% endfor %}
         </tbody>
     </table>
 </div>
 
-<h2 class="font-semibold mb-3">История сдач (отчёты продавцов)</h2>
-<div class="bg-white rounded-xl shadow-sm overflow-hidden">
+<h2 class="font-semibold mb-3">История сдач</h2>
+<div class="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
     <table class="w-full text-sm">
-        <thead class="bg-gray-50 text-left">
+        <thead class="bg-slate-50 text-left">
             <tr>
-                <th class="px-4 py-3">Дата сдачи</th>
-                <th class="px-4 py-3">Период задания</th>
+                <th class="px-4 py-3">Сдано</th>
+                <th class="px-4 py-3">Период</th>
                 <th class="px-4 py-3">Магазин</th>
                 <th class="px-4 py-3">Группы</th>
                 <th class="px-4 py-3">Продавец</th>
@@ -88,23 +89,21 @@
                 <th class="px-4 py-3"></th>
             </tr>
         </thead>
-        <tbody class="divide-y">
+        <tbody class="divide-y divide-slate-100">
             {% for h in history %}
-            <tr class="hover:bg-gray-50">
+            <tr class="hover:bg-slate-50">
                 <td class="px-4 py-3">{{ h.finished_at.strftime('%d.%m.%y %H:%M') if h.finished_at else h.count_date }}</td>
                 <td class="px-4 py-3">{{ h.period }}</td>
                 <td class="px-4 py-3">{{ h.store_name }}</td>
-                <td class="px-4 py-3 text-gray-600">{{ h.cats_label }}</td>
+                <td class="px-4 py-3 text-slate-600">{{ h.cats_label }}</td>
                 <td class="px-4 py-3">{{ h.seller_name }}</td>
-                <td class="px-4 py-3 {% if h.diff_count %}text-red-600 font-medium{% else %}text-green-600{% endif %}">
+                <td class="px-4 py-3 {% if h.diff_count %}text-red-600 font-medium{% else %}text-emerald-600{% endif %}">
                     {% if h.diff_count %}{{ h.diff_count }} поз.{% else %}нет{% endif %}
                 </td>
-                <td class="px-4 py-3">
-                    <a href="/inventory/report/{{ h.id }}" class="text-blue-600 hover:underline">Открыть</a>
-                </td>
+                <td class="px-4 py-3"><a href="/inventory/report/{{ h.id }}" class="text-indigo-600 hover:underline">Открыть</a></td>
             </tr>
             {% else %}
-            <tr><td colspan="7" class="px-4 py-6 text-center text-gray-400">История пуста</td></tr>
+            <tr><td colspan="7" class="px-4 py-6 text-center text-slate-400">История пуста</td></tr>
             {% endfor %}
         </tbody>
     </table>
