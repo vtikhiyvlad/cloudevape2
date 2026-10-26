@@ -180,6 +180,17 @@ async def health():
     return {"status": "ok" if db_ok else "degraded", "database": db_ok}
 
 
+@app.get("/debug/webapp-config")
+async def debug_webapp_config():
+    """Без секретов: проверка настроек Mini App."""
+    base = (settings.WEB_BASE_URL or "").rstrip("/")
+    return {
+        "web_base_url": base or None,
+        "bot_token_set": bool(settings.BOT_TOKEN and not settings.BOT_TOKEN.startswith("123")),
+        "hint": "BotFather Domain must match host of web_base_url (no https://)",
+    }
+
+
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request, db: AsyncSession = Depends(get_db)):
     user = await get_current_web_user(request, db)
