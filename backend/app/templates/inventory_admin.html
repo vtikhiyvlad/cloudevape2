@@ -66,7 +66,17 @@
                 <td class="px-4 py-3 font-medium">{{ t.date_from.strftime('%d.%m.%y') }}–{{ t.date_to.strftime('%d.%m.%y') }}</td>
                 <td class="px-4 py-3">{{ t.store_name }}</td>
                 <td class="px-4 py-3 text-slate-600">{{ t.cats_label }}</td>
-                <td class="px-4 py-3">{% if t.is_active %}<span class="text-emerald-600">Активна</span>{% else %}<span class="text-slate-400">Закрыта</span>{% endif %}</td>
+                <td class="px-4 py-3">
+                    {% if t.is_active %}
+                    <span class="text-emerald-600">Активна</span>
+                    <form method="post" action="/inventory/close/{{ t.id }}" class="inline ml-2"
+                          onsubmit="return confirm('Закрыть инвентаризацию досрочно?');">
+                        <button class="text-xs text-red-500 hover:underline">Закрыть</button>
+                    </form>
+                    {% else %}
+                    <span class="text-slate-400">Закрыта</span>
+                    {% endif %}
+                </td>
             </tr>
             {% else %}
             <tr><td colspan="4" class="px-4 py-6 text-center text-slate-400">Нет заданий</td></tr>

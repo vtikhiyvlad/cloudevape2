@@ -98,7 +98,10 @@ async def create_sale(
     total_amount = Decimal("0")
     items_count = 0
 
-    for item_data in items:
+    # Сортировка по variant_id — один порядок блокировок, меньше deadlock при параллельных продажах
+    ordered = sorted(items, key=lambda x: int(x["variant_id"]))
+
+    for item_data in ordered:
         variant_id = item_data["variant_id"]
         quantity = item_data["quantity"]
 

@@ -114,15 +114,13 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="CloudVape", version="0.1.0", lifespan=lifespan)
 
-_web_base = (settings.WEB_BASE_URL or "").lower()
-_is_https = _web_base.startswith("https://")
 app.add_middleware(
     SessionMiddleware,
     secret_key=settings.SECRET_KEY,
     session_cookie="cloudvape_session",
-    max_age=60 * 60 * 14,
-    same_site="none" if _is_https else "lax",
-    https_only=_is_https,
+    max_age=60 * 60 * 12,
+    same_site="lax",
+    https_only=(settings.WEB_BASE_URL or "").lower().startswith("https://"),
 )
 app.add_middleware(
     CORSMiddleware,
@@ -306,7 +304,7 @@ async def auth_magic(request: Request, t: str = "", to: str = "sell", db: AsyncS
     from app.core.rate_limit import is_allowed
 
     client = request.client.host if request.client else "unknown"
-    if not is_allowed(f"magic:{client}", max_hits=15, window_sec=60):
+    if not is_allowed(f"magic:{client}", max_hits=20, window_sec=60):
         return HTMLResponse("<h3>Слишком много попыток</h3>", status_code=429)
 
     token = (t or "").strip()
@@ -1435,6 +1433,22 @@ async def inventory_create(
     return RedirectResponse("/inventory", status_code=303)
 
 
+
+
+@app.post("/inventory/close/{task_id}")
+async def inventory_close_early(request: Request, task_id: int, db: AsyncSession = Depends(get_db)):
+    """Досрочное закрытие инвентаризации владельцем/админом."""
+    user = await get_current_web_user(request, db)
+    if not user or user.role not in ("sysadmin", "owner", "admin"):
+        return RedirectResponse("/login", status_code=303)
+    from app.models.inventory_task import InventoryTask
+    task = await db.get(InventoryTask, task_id)
+    if not task:
+        return RedirectResponse("/inventory", status_code=303)
+    task.is_active = False
+    await db.commit()
+    request.session["flash_success"] = f"Инвентаризация #{task_id} закрыта досрочно"
+    return RedirectResponse("/inventory", status_code=303)
 
 @app.get("/inventory/report/{count_id}", response_class=HTMLResponse)
 async def inventory_report(request: Request, count_id: int, db: AsyncSession = Depends(get_db)):
