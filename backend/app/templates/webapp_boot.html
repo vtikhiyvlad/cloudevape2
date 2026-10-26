@@ -4,140 +4,131 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>CloudVape</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-slate-900 text-white min-h-screen flex items-center justify-center p-6">
     <div class="text-center max-w-sm w-full">
         <div class="text-2xl font-bold mb-2">CloudVape</div>
-        <p class="text-slate-400 text-sm mb-6" id="status">Подключение к Telegram…</p>
+        <p class="text-slate-400 text-sm mb-6" id="status">Вход…</p>
         <div class="w-8 h-8 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin mx-auto" id="spin"></div>
-        <p class="text-red-400 text-sm mt-6 hidden whitespace-pre-wrap" id="err"></p>
+        <p class="text-red-400 text-sm mt-6 hidden text-left" id="err"></p>
         <button type="button" id="retry" class="hidden mt-4 bg-indigo-600 px-4 py-2 rounded-xl text-sm">Повторить</button>
     </div>
+<script>
+const dest = {{ dest | tojson }};
 
-    <script>
-        const dest = {{ dest | tojson }};
+function $(id){ return document.getElementById(id); }
 
-        function $(id) { return document.getElementById(id); }
+function showErr(lines) {
+  $('status').textContent = 'Не удалось войти';
+  $('spin').classList.add('hidden');
+  const err = $('err');
+  err.innerHTML = '';
+  (Array.isArray(lines) ? lines : [String(lines)]).forEach(function(line) {
+    const p = document.createElement('p');
+    p.className = 'mb-1';
+    p.textContent = line;
+    err.appendChild(p);
+  });
+  err.classList.remove('hidden');
+  $('retry').classList.remove('hidden');
+}
 
-        function showErr(msg) {
-            $('status').textContent = 'Не удалось войти';
-            $('spin').classList.add('hidden');
-            $('err').textContent = msg;
-            $('err').classList.remove('hidden');
-            $('retry').classList.remove('hidden');
-        }
+/** initData из hash (Android часто кладёт сюда) */
+function initDataFromHash() {
+  try {
+    var hash = window.location.hash || '';
+    if (hash.charAt(0) === '#') hash = hash.slice(1);
+    // tgWebAppData=...&tgWebAppVersion=...
+    var params = new URLSearchParams(hash);
+    var data = params.get('tgWebAppData');
+    if (data) return data;
+    // иногда весь hash — query string с init params
+    if (params.get('user') || params.get('auth_date')) {
+      return hash;
+    }
+  } catch (e) {}
+  return '';
+}
 
-        function loadTelegramScript() {
-            return new Promise((resolve, reject) => {
-                if (window.Telegram && window.Telegram.WebApp) {
-                    resolve(window.Telegram.WebApp);
-                    return;
-                }
-                const s = document.createElement('script');
-                s.src = 'https://telegram.org/js/telegram-web-app.js';
-                s.async = true;
-                s.onload = () => {
-                    if (window.Telegram && window.Telegram.WebApp) {
-                        resolve(window.Telegram.WebApp);
-                    } else {
-                        reject(new Error('Telegram.WebApp не загрузился'));
-                    }
-                };
-                s.onerror = () => reject(new Error('Не удалось загрузить telegram-web-app.js'));
-                document.head.appendChild(s);
-            });
-        }
+function getInitData(tg) {
+  if (tg && tg.initData && tg.initData.length > 10) return tg.initData;
+  var fromHash = initDataFromHash();
+  if (fromHash && fromHash.length > 10) return fromHash;
+  return '';
+}
 
-        function waitInitData(tg, timeoutMs) {
-            return new Promise((resolve) => {
-                const start = Date.now();
-                const tick = () => {
-                    try { tg.ready(); } catch (e) {}
-                    if (tg.initData && tg.initData.length > 10) {
-                        resolve(tg.initData);
-                        return;
-                    }
-                    if (Date.now() - start > timeoutMs) {
-                        resolve(tg.initData || '');
-                        return;
-                    }
-                    setTimeout(tick, 100);
-                };
-                tick();
-            });
-        }
+function sleep(ms) {
+  return new Promise(function(r){ setTimeout(r, ms); });
+}
 
-        async function boot() {
-            $('err').classList.add('hidden');
-            $('retry').classList.add('hidden');
-            $('spin').classList.remove('hidden');
-            $('status').textContent = 'Подключение к Telegram…';
+async function waitInitData(tg, ms) {
+  var start = Date.now();
+  while (Date.now() - start < ms) {
+    try { if (tg) tg.ready(); } catch (e) {}
+    var d = getInitData(tg);
+    if (d) return d;
+    await sleep(120);
+  }
+  return getInitData(tg);
+}
 
-            let tg;
-            try {
-                tg = await loadTelegramScript();
-            } catch (e) {
-                showErr(String(e.message || e));
-                return;
-            }
+async function boot() {
+  $('err').classList.add('hidden');
+  $('retry').classList.add('hidden');
+  $('spin').classList.remove('hidden');
+  $('status').textContent = 'Вход…';
 
-            try {
-                tg.ready();
-                tg.expand();
-            } catch (e) {}
+  var tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
+  if (tg) {
+    try { tg.ready(); tg.expand(); } catch (e) {}
+  }
 
-            $('status').textContent = 'Проверка сессии Telegram…';
-            const initData = await waitInitData(tg, 4000);
+  var initData = await waitInitData(tg, 5000);
 
-            if (!initData || initData.length < 10) {
-                const platform = (tg.platform || '?');
-                const ver = (tg.version || '?');
-                showErr(
-                    'Telegram не передал данные входа (initData пустой).\\n\\n' +
-                    'Платформа: ' + platform + ', API: ' + ver + '\\n\\n' +
-                    'Проверьте:\\n' +
-                    '1. Domain в @BotFather = домен Render без https\\n' +
-                    '2. WEB_BASE_URL в Render = https://тот-же-домен\\n' +
-                    '3. Кнопка из бота (не из меню браузера)\\n' +
-                    '4. /start в боте заново после смены Domain'
-                );
-                return;
-            }
+  if (!initData) {
+    var platform = tg ? (tg.platform || '?') : 'нет WebApp';
+    var ver = tg ? (tg.version || '?') : '-';
+    showErr([
+      'Telegram не передал данные входа.',
+      'Платформа: ' + platform + ', API: ' + ver,
+      '',
+      'Сделайте по шагам:',
+      '1) @BotFather → Bot Settings → Domain',
+      '   только хост: xxx.onrender.com',
+      '2) Render: WEB_BASE_URL=https://xxx.onrender.com',
+      '3) В боте снова /start',
+      '4) Откройте Кассу кнопкой из бота'
+    ]);
+    return;
+  }
 
-            $('status').textContent = 'Авторизация…';
-            try {
-                const res = await fetch('/auth/telegram-webapp', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Accept': 'application/json',
-                    },
-                    body: JSON.stringify({ init_data: initData, dest: dest }),
-                    credentials: 'include',
-                });
-                let data = {};
-                try { data = await res.json(); } catch (e) {}
-                if (!res.ok) {
-                    throw new Error(data.detail || ('Ошибка сервера ' + res.status));
-                }
-                if (!data.redirect) {
-                    throw new Error('Нет redirect от сервера');
-                }
-                $('status').textContent = 'Готово, открываем…';
-                window.location.replace(data.redirect);
-            } catch (e) {
-                showErr(e.message || String(e));
-            }
-        }
+  $('status').textContent = 'Авторизация…';
+  try {
+    var res = await fetch('/auth/telegram-webapp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify({ init_data: initData, dest: dest }),
+      credentials: 'include'
+    });
+    var data = {};
+    try { data = await res.json(); } catch (e) {}
+    if (!res.ok) throw new Error(data.detail || ('Ошибка ' + res.status));
+    if (!data.redirect) throw new Error('Сервер не вернул redirect');
+    $('status').textContent = 'Готово…';
+    window.location.replace(data.redirect);
+  } catch (e) {
+    showErr([e.message || String(e)]);
+  }
+}
 
-        $('retry').onclick = boot;
-        // старт после полной загрузки DOM
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', boot);
-        } else {
-            boot();
-        }
-    </script>
+$('retry').onclick = boot;
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', boot);
+} else {
+  boot();
+}
+</script>
 </body>
 </html>
