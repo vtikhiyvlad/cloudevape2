@@ -4,7 +4,7 @@ from fastapi import FastAPI, Request, Form, UploadFile, File, Depends, HTTPExcep
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import RedirectResponse, HTMLResponse
+from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse
 from starlette.middleware.sessions import SessionMiddleware
 import os
 import asyncio
@@ -29,20 +29,34 @@ templates = Jinja2Templates(directory="app/templates")
 
 
 async def create_owner_if_not_exists():
+    """Сисадмин из env: логин owner / OWNER_PASSWORD. Не падаем, если в БД уже несколько owner."""
     async with AsyncSessionLocal() as session:
-        result = await session.execute(select(User).where(User.role == "owner"))
-        owner = result.scalar_one_or_none()
-        if not owner:
-            owner = User(
-                full_name="Владелец",
-                username="owner",
-                role="sysadmin",
-                password_hash=get_password_hash(settings.OWNER_PASSWORD),
-                is_active=True,
-            )
-            session.add(owner)
+        # ищем именно тех-аккаунт по username
+        result = await session.execute(
+            select(User).where(User.username == "owner").limit(1)
+        )
+        admin = result.scalars().first()
+        if admin:
+            # обновим пароль из env и роль sysadmin (на случай старых данных)
+            if admin.role not in ("sysadmin", "owner"):
+                admin.role = "sysadmin"
+            admin.password_hash = get_password_hash(settings.OWNER_PASSWORD)
+            admin.is_active = True
             await session.commit()
-            print("✅ Создан сисадмин (env login) (логин: owner)")
+            print("✅ Сисадмин owner — пароль синхронизирован с env")
+            return
+
+        # нет username=owner — создаём
+        admin = User(
+            full_name="Сисадмин",
+            username="owner",
+            role="sysadmin",
+            password_hash=get_password_hash(settings.OWNER_PASSWORD),
+            is_active=True,
+        )
+        session.add(admin)
+        await session.commit()
+        print("✅ Создан сисадмин (логин: owner)")
 
 
 
