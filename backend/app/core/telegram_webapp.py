@@ -1,4 +1,4 @@
-"""Проверка initData Telegram Mini App."""
+"""Проверка initData Telegram Mini App (официальный алгоритм)."""
 from __future__ import annotations
 
 import hashlib
@@ -11,16 +11,13 @@ from app.core.config import get_settings
 
 
 def validate_init_data(init_data: str, max_age_sec: int = 86400) -> dict | None:
-    """
-    Возвращает parsed data (с user) или None если подпись/срок невалидны.
-    https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app
-    """
-    if not init_data or not init_data.strip():
+    if not init_data or not str(init_data).strip():
         return None
 
     settings = get_settings()
-    token = settings.BOT_TOKEN
+    token = (settings.BOT_TOKEN or "").strip()
     if not token:
+        print("webapp: BOT_TOKEN empty")
         return None
 
     parsed = dict(parse_qsl(init_data, keep_blank_values=True))
@@ -28,10 +25,10 @@ def validate_init_data(init_data: str, max_age_sec: int = 86400) -> dict | None:
     if not received_hash:
         return None
 
-    # data-check-string
     check_list = [f"{k}={v}" for k, v in sorted(parsed.items())]
-    data_check_string = "\n".join(check_list)
+    data_check_string = chr(10).join(check_list)
 
+    # secret_key = HMAC_SHA256(key="WebAppData", data=bot_token)
     secret_key = hmac.new(
         key=b"WebAppData",
         msg=token.encode("utf-8"),
@@ -44,6 +41,7 @@ def validate_init_data(init_data: str, max_age_sec: int = 86400) -> dict | None:
     ).hexdigest()
 
     if not hmac.compare_digest(calculated, received_hash):
+        print("webapp: hash mismatch")
         return None
 
     auth_date = parsed.get("auth_date")
@@ -51,7 +49,8 @@ def validate_init_data(init_data: str, max_age_sec: int = 86400) -> dict | None:
         try:
             ts = int(auth_date)
             age = datetime.now(timezone.utc).timestamp() - ts
-            if age > max_age_sec or age < -60:
+            if age > max_age_sec or age < -300:
+                print("webapp: auth_date expired", age)
                 return None
         except ValueError:
             return None

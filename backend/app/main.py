@@ -114,13 +114,15 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="CloudVape", version="0.1.0", lifespan=lifespan)
 
+_web_base = (settings.WEB_BASE_URL or "").lower()
+_is_https = _web_base.startswith("https://")
 app.add_middleware(
     SessionMiddleware,
     secret_key=settings.SECRET_KEY,
     session_cookie="cloudvape_session",
-    max_age=60 * 60 * 12,  # 12 часов
-    same_site="lax",
-    https_only=False,  # True когда будет свой HTTPS-домен
+    max_age=60 * 60 * 14,
+    same_site="none" if _is_https else "lax",
+    https_only=_is_https,
 )
 app.add_middleware(
     CORSMiddleware,
@@ -364,9 +366,11 @@ async def webapp_boot(request: Request):
 
 @app.post("/auth/telegram-webapp")
 async def auth_telegram_webapp(request: Request, db: AsyncSession = Depends(get_db)):
-    """Валидация initData Mini App → session cookie."""
+    """Проверка initData → одноразовый magic-token (GET ставит session надёжно в WebView)."""
     from app.core.telegram_webapp import validate_init_data
     from app.core.rate_limit import is_allowed
+    from app.core.security import new_login_token
+    from app.models.login_code import LoginCode
     from pydantic import BaseModel
 
     class Body(BaseModel):
@@ -374,7 +378,7 @@ async def auth_telegram_webapp(request: Request, db: AsyncSession = Depends(get_
         dest: str = "sell"
 
     client = request.client.host if request.client else "unknown"
-    if not is_allowed(f"webapp:{client}", max_hits=30, window_sec=60):
+    if not is_allowed(f"webapp:{client}", max_hits=40, window_sec=60):
         return JSONResponse({"detail": "Слишком много попыток"}, status_code=429)
 
     try:
@@ -384,21 +388,25 @@ async def auth_telegram_webapp(request: Request, db: AsyncSession = Depends(get_
 
     data = validate_init_data(body.init_data)
     if not data or not isinstance(data.get("user"), dict):
-        return JSONResponse({"detail": "Подпись Telegram не прошла. Открой через кнопку в боте."}, status_code=401)
+        return JSONResponse({
+            "detail": "Подпись Telegram не прошла. Проверь BOT_TOKEN и Domain в BotFather."
+        }, status_code=401)
 
     tg_user = data["user"]
     tg_id = tg_user.get("id")
     if not tg_id:
-        return JSONResponse({"detail": "Нет user id"}, status_code=401)
+        return JSONResponse({"detail": "Нет Telegram ID"}, status_code=401)
 
     result = await db.execute(select(User).where(User.telegram_id == int(tg_id)))
     user = result.scalar_one_or_none()
 
     if not user:
-        # авто-создание продавца (ещё без магазина)
+        fn = (tg_user.get("first_name") or "")
+        if tg_user.get("last_name"):
+            fn = (fn + " " + tg_user["last_name"]).strip()
         user = User(
             telegram_id=int(tg_id),
-            full_name=(tg_user.get("first_name") or "") + (" " + tg_user["last_name"] if tg_user.get("last_name") else ""),
+            full_name=fn or "Telegram",
             username=tg_user.get("username"),
             role="seller",
             is_active=True,
@@ -407,30 +415,33 @@ async def auth_telegram_webapp(request: Request, db: AsyncSession = Depends(get_
         await db.flush()
     elif not user.is_active:
         return JSONResponse({"detail": "Доступ закрыт"}, status_code=403)
+    else:
+        fn = (tg_user.get("first_name") or "")
+        if tg_user.get("last_name"):
+            fn = (fn + " " + tg_user["last_name"]).strip()
+        if fn and user.full_name != fn:
+            user.full_name = fn
 
-    # обновить имя
-    fn = (tg_user.get("first_name") or "") + (" " + tg_user["last_name"] if tg_user.get("last_name") else "")
-    if fn.strip() and user.full_name != fn.strip():
-        user.full_name = fn.strip()
+    # погасить старые коды
+    old = await db.execute(
+        select(LoginCode).where(LoginCode.user_id == user.id, LoginCode.used == False)
+    )
+    for c in old.scalars().all():
+        c.used = True
 
+    token = new_login_token()
+    db.add(LoginCode(
+        user_id=user.id,
+        code=token,
+        expires_at=datetime.now(timezone.utc) + __import__("datetime").timedelta(minutes=3),
+        used=False,
+    ))
     await db.commit()
-    request.session.clear()
-    request.session["user_id"] = user.id
-    request.session["login_at"] = datetime.now(timezone.utc).isoformat()
-    request.session["auth_via"] = "telegram_webapp"
 
     dest = (body.dest or "sell").lower()
-    if dest == "admin" and user.role in ("sysadmin", "owner", "admin"):
-        redirect = "/"
-    elif dest == "warehouse" or user.role == "warehouse":
-        redirect = "/products"
-    elif user.role == "seller":
-        redirect = "/sell"
-    elif dest == "sell":
-        redirect = "/sell"
-    else:
-        redirect = "/"
-
+    if dest not in ("sell", "admin", "warehouse"):
+        dest = "sell"
+    redirect = f"/auth/magic?t={token}&to={dest}"
     return JSONResponse({"ok": True, "redirect": redirect})
 
 
