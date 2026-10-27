@@ -26,9 +26,9 @@
   <div class="bg-white rounded-3xl border border-slate-200 shadow-sm p-6 text-center space-y-4">
     <div class="text-4xl">🔒</div>
     <div class="font-semibold text-lg">День закрыт</div>
-    <p class="text-sm text-slate-500">Откройте день, чтобы принимать продажи. Владельцу уйдёт уведомление.</p>
+    <p class="text-sm text-slate-500">Откройте день, чтобы принимать продажи.</p>
     <form method="post" action="/sell/shift/open">
-      <button class="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-3.5 rounded-2xl font-bold text-base">Открыть день</button>
+      <button class="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-3.5 rounded-2xl font-bold">Открыть день</button>
     </form>
   </div>
   {% else %}
@@ -70,24 +70,26 @@
   <div class="bg-white rounded-3xl border border-slate-200 shadow-sm p-5 space-y-3">
     <div class="font-semibold">Закрыть день</div>
     <p class="text-xs text-slate-500">
-      Укажите <b>сколько всего наличных в ящике</b> (накоплено до инкассации, не только за сегодня).
-      Можно прикрепить фото ящика / отчёта — до 10 шт.
+      Сумма <b>в ящике</b> — всего наличных до инкассации.
+      Фото (до 10) уходят только владельцу в Telegram и <b>не сохраняются</b> на сервере.
     </p>
-    <form method="post" action="/sell/shift/close" enctype="multipart/form-data" class="space-y-3"
-          onsubmit="return confirm('Закрыть день и отправить отчёт владельцу?');">
+    <form method="post" action="/sell/shift/close" enctype="multipart/form-data" class="space-y-3" id="closeForm"
+          onsubmit="return confirmClose();">
       <div>
         <label class="text-xs text-slate-500">Наличные в ящике, ₽</label>
         <input type="number" name="cash_drawer" step="0.01" min="0" required inputmode="decimal"
-               placeholder="0" class="w-full mt-1 border border-slate-200 rounded-2xl px-4 py-3 text-lg font-semibold outline-none focus:ring-2 focus:ring-indigo-500">
+               class="w-full mt-1 border border-slate-200 rounded-2xl px-4 py-3 text-lg font-semibold outline-none focus:ring-2 focus:ring-indigo-500">
       </div>
       <div>
-        <label class="text-xs text-slate-500">Фото (1–10)</label>
-        <input type="file" name="photos" accept="image/*" multiple capture="environment"
+        <label class="text-xs text-slate-500">Фото — выберите сразу несколько (1–10)</label>
+        <input type="file" name="photos" id="photosInput" accept="image/*" multiple
                class="w-full mt-1 text-sm file:mr-3 file:py-2 file:px-3 file:rounded-xl file:border-0 file:bg-slate-900 file:text-white">
+        <p class="text-xs text-slate-400 mt-1" id="photoCount">Файлов не выбрано</p>
+        <div id="photoPreview" class="flex flex-wrap gap-2 mt-2"></div>
       </div>
       <div>
         <label class="text-xs text-slate-500">Комментарий</label>
-        <input type="text" name="comment" class="w-full mt-1 border border-slate-200 rounded-2xl px-4 py-2.5 text-sm" placeholder="необязательно">
+        <input type="text" name="comment" class="w-full mt-1 border border-slate-200 rounded-2xl px-4 py-2.5 text-sm">
       </div>
       <button type="submit" class="w-full bg-slate-900 text-white py-3.5 rounded-2xl font-bold">Закрыть день</button>
     </form>
@@ -102,5 +104,38 @@
     <a href="/sell/shift" class="py-3 text-indigo-600"><div class="text-lg">📊</div><div class="text-[11px] font-medium">Смена</div></a>
   </div>
 </nav>
+<script>
+const input = document.getElementById('photosInput');
+const countEl = document.getElementById('photoCount');
+const preview = document.getElementById('photoPreview');
+if (input) {
+  input.addEventListener('change', () => {
+    let files = Array.from(input.files || []);
+    if (files.length > 10) {
+      alert('Максимум 10 фото. Будут взяты первые 10.');
+      const dt = new DataTransfer();
+      files.slice(0, 10).forEach(f => dt.items.add(f));
+      input.files = dt.files;
+      files = Array.from(input.files);
+    }
+    countEl.textContent = files.length ? ('Выбрано фото: ' + files.length) : 'Файлов не выбрано';
+    preview.innerHTML = '';
+    files.forEach(f => {
+      const url = URL.createObjectURL(f);
+      const img = document.createElement('img');
+      img.src = url;
+      img.className = 'w-14 h-14 object-cover rounded-xl border border-slate-200';
+      preview.appendChild(img);
+    });
+  });
+}
+function confirmClose() {
+  const n = (input && input.files) ? input.files.length : 0;
+  const msg = n > 0
+    ? ('Закрыть день и отправить отчёт + ' + n + ' фото владельцу?')
+    : 'Закрыть день и отправить отчёт владельцу без фото?';
+  return confirm(msg);
+}
+</script>
 </body>
 </html>

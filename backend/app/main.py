@@ -1469,6 +1469,7 @@ async def sell_shift_open(request: Request, db: AsyncSession = Depends(get_db)):
 
 @app.post("/sell/shift/close")
 async def sell_shift_close(request: Request, db: AsyncSession = Depends(get_db)):
+    """Закрытие дня. Фото только в RAM → Telegram, на диск не пишем."""
     user = await get_current_web_user(request, db)
     if not user:
         return RedirectResponse("/login", status_code=303)
@@ -1478,7 +1479,7 @@ async def sell_shift_close(request: Request, db: AsyncSession = Depends(get_db))
 
     form = await request.form()
     cash_drawer = form.get("cash_drawer") or "0"
-    comment = (form.get("comment") or "").strip()
+    comment = (str(form.get("comment") or "")).strip()
 
     sid, store_name = await get_seller_store(user, db)
     if not sid:
@@ -1498,22 +1499,37 @@ async def sell_shift_close(request: Request, db: AsyncSession = Depends(get_db))
         request.session["flash_error"] = "Укажите сумму в ящике числом"
         return RedirectResponse("/sell/shift", status_code=303)
 
-    # фото 1–10
-    photo_files = []
-    uploads = form.getlist("photos") if hasattr(form, "getlist") else []
-    for f in uploads:
-        if not hasattr(f, "read"):
+    # --- фото: только память, 1..10 ---
+    photo_files: list[tuple[str, bytes, str]] = []
+    # multi_items надёжнее getlist для нескольких файлов с одним именем
+    raw_files = []
+    try:
+        for key, value in form.multi_items():
+            if key == "photos" and hasattr(value, "read"):
+                raw_files.append(value)
+    except Exception:
+        pass
+    if not raw_files:
+        one = form.get("photos")
+        if one is not None and hasattr(one, "read"):
+            raw_files.append(one)
+
+    for f in raw_files:
+        try:
+            content = await f.read()
+        except Exception:
             continue
-        content = await f.read()
-        if not content or len(content) < 100:
+        if not content or len(content) < 50:
             continue
-        if len(content) > 8 * 1024 * 1024:
+        if len(content) > 9 * 1024 * 1024:
             continue
-        name = getattr(f, "filename", None) or "photo.jpg"
+        name = getattr(f, "filename", None) or f"photo_{len(photo_files)+1}.jpg"
         ctype = getattr(f, "content_type", None) or "image/jpeg"
-        if not str(ctype).startswith("image/"):
+        if ctype and not str(ctype).startswith("image/") and not str(name).lower().endswith((".jpg", ".jpeg", ".png", ".webp", ".heic")):
             continue
-        photo_files.append((name, content, ctype))
+        if not ctype or ctype == "application/octet-stream":
+            ctype = "image/jpeg"
+        photo_files.append((str(name), content, str(ctype)))
         if len(photo_files) >= 10:
             break
 
@@ -1562,7 +1578,12 @@ async def sell_shift_close(request: Request, db: AsyncSession = Depends(get_db))
     if photo_files:
         text += chr(10) + f"📷 Фото: {len(photo_files)}"
 
-    await notify_owners(db, text, photo_files if photo_files else None)
+    try:
+        await notify_owners(db, text, photo_files if photo_files else None)
+    finally:
+        # явно освобождаем память с фото — на диск не писали
+        photo_files.clear()
+
     request.session["flash_success"] = "День закрыт, отчёт отправлен владельцу"
     request.session["cart"] = []
     return RedirectResponse("/sell/shift", status_code=303)
