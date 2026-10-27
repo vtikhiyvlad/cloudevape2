@@ -22,7 +22,7 @@ from app.models.store import StoreUser
 from app.models.product import Category
 from app.models.product import Product, ProductVariant
 from app.services.excel_import import import_products_from_excel
-from app.api import auth, stores, products, sales
+from app.api import auth, stores, products, sales, evotor
 
 settings = get_settings()
 templates = Jinja2Templates(directory="app/templates")
@@ -147,6 +147,7 @@ app.include_router(auth.router, prefix="/api")
 app.include_router(stores.router, prefix="/api")
 app.include_router(products.router, prefix="/api")
 app.include_router(sales.router, prefix="/api")
+app.include_router(evotor.router, prefix="/api")
 
 
 # ========== Helpers ==========
