@@ -1,6 +1,6 @@
 from datetime import datetime
 from sqlalchemy import (
-    String, Integer, DateTime, JSON, Text, ForeignKey,
+    String, Integer, BigInteger, DateTime, JSON, Text, ForeignKey,
     UniqueConstraint, func,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -68,7 +68,7 @@ class EvotorSyncState(Base):
     cloudvape_store_id: Mapped[int] = mapped_column(
         ForeignKey("stores.id", ondelete="CASCADE"), nullable=False
     )
-    last_document_ms: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_document_ms: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
