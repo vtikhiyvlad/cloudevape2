@@ -16,7 +16,7 @@ class EvotorClient:
         self._client = httpx.AsyncClient(
             base_url=self.BASE_URL,
             headers={
-                "Authorization": f"Bearer {token}",
+                "Authorization": token,
                 "Accept": "application/vnd.evotor.v2+json",
                 "Content-Type": "application/vnd.evotor.v2+json",
             },
