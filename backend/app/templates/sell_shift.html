@@ -1,52 +1,106 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Смена — CloudVape</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
-        .safe-bottom { padding-bottom: calc(72px + env(safe-area-inset-bottom)); }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>Смена — CloudVape</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; }
+  .safe-bottom { padding-bottom: calc(76px + env(safe-area-inset-bottom)); }
+</style>
 </head>
-<body class="bg-slate-50 min-h-screen safe-bottom">
-<header class="bg-slate-900 text-white px-4 py-3">
-    <div class="max-w-lg mx-auto font-semibold text-sm">Моя смена</div>
+<body class="bg-slate-100 min-h-screen safe-bottom text-slate-900">
+<header class="bg-slate-950 text-white px-4 py-3 sticky top-0 z-20">
+  <div class="max-w-lg mx-auto">
+    <div class="font-semibold text-sm">Смена</div>
+    <div class="text-xs text-slate-400">{{ store_name }}</div>
+  </div>
 </header>
-<main class="max-w-lg mx-auto px-4 py-6">
-    <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 mb-4 text-center">
-        <div class="text-xs text-slate-500 mb-1">Чеков сегодня</div>
-        <div class="text-3xl font-bold">{{ count }}</div>
-        <div class="text-xs text-slate-500 mt-4 mb-1">Сумма</div>
-        <div class="text-3xl font-bold text-emerald-600">{{ total | int }} ₽</div>
+
+<main class="max-w-lg mx-auto px-4 py-5 space-y-4">
+  {% if success %}<div class="bg-emerald-50 border border-emerald-100 text-emerald-800 rounded-2xl px-4 py-3 text-sm">{{ success }}</div>{% endif %}
+  {% if error %}<div class="bg-red-50 border border-red-100 text-red-800 rounded-2xl px-4 py-3 text-sm">{{ error }}</div>{% endif %}
+
+  {% if not open_shift %}
+  <div class="bg-white rounded-3xl border border-slate-200 shadow-sm p-6 text-center space-y-4">
+    <div class="text-4xl">🔒</div>
+    <div class="font-semibold text-lg">День закрыт</div>
+    <p class="text-sm text-slate-500">Откройте день, чтобы принимать продажи. Владельцу уйдёт уведомление.</p>
+    <form method="post" action="/sell/shift/open">
+      <button class="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-3.5 rounded-2xl font-bold text-base">Открыть день</button>
+    </form>
+  </div>
+  {% else %}
+  <div class="bg-white rounded-3xl border border-slate-200 shadow-sm p-5 space-y-3">
+    <div class="flex items-center justify-between">
+      <div>
+        <div class="text-xs text-emerald-600 font-medium">● День открыт</div>
+        <div class="text-xs text-slate-400 mt-0.5">с {{ open_shift.opened_at.strftime('%d.%m %H:%M') }}</div>
+      </div>
+      <div class="text-right">
+        <div class="text-2xl font-bold">{{ total_amount | int }} ₽</div>
+        <div class="text-xs text-slate-500">{{ sales_count }} чек.</div>
+      </div>
     </div>
-    <div class="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-        {% for s in sales %}
-        <div class="px-4 py-3 border-b border-slate-50 flex justify-between text-sm">
-            <span class="text-slate-500">{{ s.created_at.strftime('%H:%M') }} · №{{ s.id }}</span>
-            <span class="font-semibold">{{ s.total_amount | int }} ₽</span>
-        </div>
-        {% else %}
-        <div class="px-4 py-10 text-center text-slate-400 text-sm">Продаж пока нет</div>
-        {% endfor %}
+    <div class="grid grid-cols-2 gap-2 pt-2">
+      <div class="bg-slate-50 rounded-2xl p-3 text-center">
+        <div class="text-xs text-slate-500">Нал за день</div>
+        <div class="font-bold text-lg">{{ total_cash | int }} ₽</div>
+      </div>
+      <div class="bg-slate-50 rounded-2xl p-3 text-center">
+        <div class="text-xs text-slate-500">Карта</div>
+        <div class="font-bold text-lg">{{ total_card | int }} ₽</div>
+      </div>
     </div>
+  </div>
+
+  <div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+    <div class="px-4 py-3 font-semibold text-sm border-b border-slate-100">Чеки смены</div>
+    {% for s in sales %}
+    <div class="px-4 py-3 border-b border-slate-50 flex justify-between text-sm">
+      <span class="text-slate-500">{{ s.created_at.strftime('%H:%M') }} · №{{ s.id }}</span>
+      <span class="font-semibold">{{ s.total_amount | int }} ₽</span>
+    </div>
+    {% else %}
+    <div class="px-4 py-8 text-center text-slate-400 text-sm">Продаж пока нет</div>
+    {% endfor %}
+  </div>
+
+  <div class="bg-white rounded-3xl border border-slate-200 shadow-sm p-5 space-y-3">
+    <div class="font-semibold">Закрыть день</div>
+    <p class="text-xs text-slate-500">
+      Укажите <b>сколько всего наличных в ящике</b> (накоплено до инкассации, не только за сегодня).
+      Можно прикрепить фото ящика / отчёта — до 10 шт.
+    </p>
+    <form method="post" action="/sell/shift/close" enctype="multipart/form-data" class="space-y-3"
+          onsubmit="return confirm('Закрыть день и отправить отчёт владельцу?');">
+      <div>
+        <label class="text-xs text-slate-500">Наличные в ящике, ₽</label>
+        <input type="number" name="cash_drawer" step="0.01" min="0" required inputmode="decimal"
+               placeholder="0" class="w-full mt-1 border border-slate-200 rounded-2xl px-4 py-3 text-lg font-semibold outline-none focus:ring-2 focus:ring-indigo-500">
+      </div>
+      <div>
+        <label class="text-xs text-slate-500">Фото (1–10)</label>
+        <input type="file" name="photos" accept="image/*" multiple capture="environment"
+               class="w-full mt-1 text-sm file:mr-3 file:py-2 file:px-3 file:rounded-xl file:border-0 file:bg-slate-900 file:text-white">
+      </div>
+      <div>
+        <label class="text-xs text-slate-500">Комментарий</label>
+        <input type="text" name="comment" class="w-full mt-1 border border-slate-200 rounded-2xl px-4 py-2.5 text-sm" placeholder="необязательно">
+      </div>
+      <button type="submit" class="w-full bg-slate-900 text-white py-3.5 rounded-2xl font-bold">Закрыть день</button>
+    </form>
+  </div>
+  {% endif %}
 </main>
-<nav class="fixed bottom-0 inset-x-0 bg-white border-t border-slate-200 z-30 pb-[env(safe-area-inset-bottom)]">
-    <div class="max-w-lg mx-auto grid grid-cols-3 text-center">
-        <a href="/sell" class="py-3 text-slate-400">
-            <div class="text-lg leading-none">💳</div>
-            <div class="text-[11px] font-medium mt-0.5">Касса</div>
-        </a>
-        <a href="/sell/inventory" class="py-3 text-slate-400">
-            <div class="text-lg leading-none">📋</div>
-            <div class="text-[11px] font-medium mt-0.5">Учёт</div>
-        </a>
-        <a href="/sell/shift" class="py-3 text-indigo-600">
-            <div class="text-lg leading-none">📊</div>
-            <div class="text-[11px] font-medium mt-0.5">Смена</div>
-        </a>
-    </div>
+
+<nav class="fixed bottom-0 inset-x-0 bg-white/95 backdrop-blur border-t border-slate-200 z-30 pb-[env(safe-area-inset-bottom)]">
+  <div class="max-w-lg mx-auto grid grid-cols-3 text-center">
+    <a href="/sell" class="py-3 text-slate-400"><div class="text-lg">💳</div><div class="text-[11px] font-medium">Касса</div></a>
+    <a href="/sell/inventory" class="py-3 text-slate-400"><div class="text-lg">📋</div><div class="text-[11px] font-medium">Учёт</div></a>
+    <a href="/sell/shift" class="py-3 text-indigo-600"><div class="text-lg">📊</div><div class="text-[11px] font-medium">Смена</div></a>
+  </div>
 </nav>
 </body>
 </html>

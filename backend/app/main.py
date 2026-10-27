@@ -1219,6 +1219,11 @@ async def sell_page(
             # фильтр списка товаров
             products = [p for p in products if True]  # already filtered below if we add to query
     pay = await get_payment_settings(db)
+    from app.models.shift import Shift
+    shift_closed = True
+    if sid:
+        _sh = await db.execute(select(Shift).where(Shift.store_id == sid, Shift.is_open == True).limit(1))
+        shift_closed = _sh.scalars().first() is None
     return templates.TemplateResponse("sell.html", {
         "request": request,
         "user": user,
@@ -1235,6 +1240,7 @@ async def sell_page(
         "q": q or "",
         "category_id": category_id,
         "pay": pay,
+        "shift_closed": shift_closed,
         "success": success,
         "error": error,
     })
@@ -1311,6 +1317,12 @@ async def sell_checkout(
     if not sid or not cart:
         return RedirectResponse("/sell", status_code=303)
 
+    from app.models.shift import Shift
+    sh = await db.execute(select(Shift).where(Shift.store_id == sid, Shift.is_open == True).limit(1))
+    if not sh.scalars().first():
+        request.session["flash_error"] = "Сначала откройте день (вкладка Смена)"
+        return RedirectResponse("/sell/shift", status_code=303)
+
     pay = await get_payment_settings(db)
     payment_type = (payment_type or "cash").lower()
     if payment_type == "cash" and not pay["cash"]:
@@ -1362,28 +1374,198 @@ async def sell_clear_cart(request: Request):
     return RedirectResponse("/sell", status_code=303)
 
 
+
+
+# ========== Смены (открыть / закрыть день) ==========
+
 @app.get("/sell/shift", response_class=HTMLResponse)
-async def sell_shift(request: Request, db: AsyncSession = Depends(get_db)):
+async def sell_shift_page(request: Request, db: AsyncSession = Depends(get_db)):
     user = await get_current_web_user(request, db)
     if not user:
         return RedirectResponse("/login", status_code=303)
+    from app.models.shift import Shift
+    from decimal import Decimal
 
-    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    result = await db.execute(
-        select(Sale)
-        .where(Sale.seller_id == user.id, Sale.created_at >= today_start)
-        .order_by(Sale.created_at.desc())
-    )
-    sales_list = result.scalars().all()
-    total = sum(float(s.total_amount) for s in sales_list)
+    sid, store_name = await get_seller_store(user, db)
+    open_shift = None
+    if sid:
+        r = await db.execute(
+            select(Shift).where(Shift.store_id == sid, Shift.is_open == True).order_by(Shift.opened_at.desc()).limit(1)
+        )
+        open_shift = r.scalars().first()
 
+    # продажи текущей смены
+    sales_count = 0
+    total_cash = 0.0
+    total_card = 0.0
+    total_amount = 0.0
+    sales = []
+    if open_shift:
+        sq = await db.execute(
+            select(Sale).where(
+                Sale.store_id == sid,
+                Sale.created_at >= open_shift.opened_at,
+            ).order_by(Sale.created_at.desc()).limit(100)
+        )
+        sales = sq.scalars().all()
+        sales_count = len(sales)
+        for s in sales:
+            total_amount += float(s.total_amount or 0)
+            total_cash += float(getattr(s, "payment_cash", 0) or 0)
+            total_card += float(getattr(s, "payment_card", 0) or 0)
+            # если payment_type cash without cash field
+            pt = getattr(s, "payment_type", None) or "cash"
+            if pt == "cash" and float(getattr(s, "payment_cash", 0) or 0) == 0:
+                total_cash += float(s.total_amount or 0)
+            if pt == "card" and float(getattr(s, "payment_card", 0) or 0) == 0:
+                total_card += float(s.total_amount or 0)
+
+    success = request.session.pop("flash_success", None)
+    error = request.session.pop("flash_error", None)
     return templates.TemplateResponse("sell_shift.html", {
-        "request": request,
-        "user": user,
-        "sales": sales_list,
-        "count": len(sales_list),
-        "total": total,
+        "request": request, "user": user, "store_name": store_name or "—",
+        "open_shift": open_shift, "sales": sales,
+        "sales_count": sales_count, "total_cash": total_cash,
+        "total_card": total_card, "total_amount": total_amount,
+        "success": success, "error": error,
     })
+
+
+@app.post("/sell/shift/open")
+async def sell_shift_open(request: Request, db: AsyncSession = Depends(get_db)):
+    user = await get_current_web_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    from app.models.shift import Shift
+    from app.services.notify import notify_owners
+
+    sid, store_name = await get_seller_store(user, db)
+    if not sid:
+        request.session["flash_error"] = "Нет магазина"
+        return RedirectResponse("/sell/shift", status_code=303)
+
+    existing = await db.execute(
+        select(Shift).where(Shift.store_id == sid, Shift.is_open == True).limit(1)
+    )
+    if existing.scalars().first():
+        request.session["flash_error"] = "Смена уже открыта"
+        return RedirectResponse("/sell/shift", status_code=303)
+
+    shift = Shift(store_id=sid, seller_id=user.id, is_open=True)
+    db.add(shift)
+    await db.commit()
+
+    seller = user.full_name or user.username or "Продавец"
+    await notify_owners(
+        db,
+        "🟢 <b>Магазин открыт</b>" + chr(10)
+        + f"Магазин: <b>{store_name}</b>" + chr(10)
+        + f"Продавец: {seller}" + chr(10)
+        + f"Время: {datetime.now(timezone.utc).strftime('%d.%m.%Y %H:%M')} UTC",
+    )
+    request.session["flash_success"] = "День открыт"
+    return RedirectResponse("/sell", status_code=303)
+
+
+@app.post("/sell/shift/close")
+async def sell_shift_close(request: Request, db: AsyncSession = Depends(get_db)):
+    user = await get_current_web_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    from app.models.shift import Shift
+    from app.services.notify import notify_owners
+    from decimal import Decimal
+
+    form = await request.form()
+    cash_drawer = form.get("cash_drawer") or "0"
+    comment = (form.get("comment") or "").strip()
+
+    sid, store_name = await get_seller_store(user, db)
+    if not sid:
+        return RedirectResponse("/sell/shift", status_code=303)
+
+    r = await db.execute(
+        select(Shift).where(Shift.store_id == sid, Shift.is_open == True).order_by(Shift.opened_at.desc()).limit(1)
+    )
+    shift = r.scalars().first()
+    if not shift:
+        request.session["flash_error"] = "Нет открытой смены"
+        return RedirectResponse("/sell/shift", status_code=303)
+
+    try:
+        drawer = Decimal(str(cash_drawer).replace(",", "."))
+    except Exception:
+        request.session["flash_error"] = "Укажите сумму в ящике числом"
+        return RedirectResponse("/sell/shift", status_code=303)
+
+    # фото 1–10
+    photo_files = []
+    uploads = form.getlist("photos") if hasattr(form, "getlist") else []
+    for f in uploads:
+        if not hasattr(f, "read"):
+            continue
+        content = await f.read()
+        if not content or len(content) < 100:
+            continue
+        if len(content) > 8 * 1024 * 1024:
+            continue
+        name = getattr(f, "filename", None) or "photo.jpg"
+        ctype = getattr(f, "content_type", None) or "image/jpeg"
+        if not str(ctype).startswith("image/"):
+            continue
+        photo_files.append((name, content, ctype))
+        if len(photo_files) >= 10:
+            break
+
+    sq = await db.execute(
+        select(Sale).where(Sale.store_id == sid, Sale.created_at >= shift.opened_at)
+    )
+    sales = sq.scalars().all()
+    total_cash = Decimal("0")
+    total_card = Decimal("0")
+    total_amount = Decimal("0")
+    for s in sales:
+        total_amount += Decimal(str(s.total_amount or 0))
+        pc = Decimal(str(getattr(s, "payment_cash", 0) or 0))
+        pd = Decimal(str(getattr(s, "payment_card", 0) or 0))
+        pt = getattr(s, "payment_type", None) or "cash"
+        if pt == "cash" and pc == 0:
+            pc = Decimal(str(s.total_amount or 0))
+        if pt == "card" and pd == 0:
+            pd = Decimal(str(s.total_amount or 0))
+        total_cash += pc
+        total_card += pd
+
+    shift.is_open = False
+    shift.closed_at = datetime.now(timezone.utc)
+    shift.sales_count = len(sales)
+    shift.total_cash = total_cash
+    shift.total_card = total_card
+    shift.total_amount = total_amount
+    shift.cash_drawer = drawer
+    shift.comment = comment or None
+    await db.commit()
+
+    seller = user.full_name or user.username or "Продавец"
+    text = (
+        "🔴 <b>Магазин закрыт</b>" + chr(10)
+        + f"Магазин: <b>{store_name}</b>" + chr(10)
+        + f"Продавец: {seller}" + chr(10)
+        + f"Чеков: <b>{len(sales)}</b>" + chr(10)
+        + f"Наличные (продажи за день): <b>{int(total_cash)} ₽</b>" + chr(10)
+        + f"Карта: <b>{int(total_card)} ₽</b>" + chr(10)
+        + f"Итого продаж: <b>{int(total_amount)} ₽</b>" + chr(10)
+        + f"В ящике (до инкассации): <b>{int(drawer)} ₽</b>"
+    )
+    if comment:
+        text += chr(10) + f"Комментарий: {comment}"
+    if photo_files:
+        text += chr(10) + f"📷 Фото: {len(photo_files)}"
+
+    await notify_owners(db, text, photo_files if photo_files else None)
+    request.session["flash_success"] = "День закрыт, отчёт отправлен владельцу"
+    request.session["cart"] = []
+    return RedirectResponse("/sell/shift", status_code=303)
 
 
 
@@ -2035,4 +2217,72 @@ async def settings_payments(request: Request, db: AsyncSession = Depends(get_db)
     await db.commit()
     request.session["flash_success"] = "Типы оплаты сохранены"
     return RedirectResponse("/settings", status_code=303)
+
+
+@app.get("/collections", response_class=HTMLResponse)
+async def collections_page(request: Request, db: AsyncSession = Depends(get_db)):
+    user = await get_current_web_user(request, db)
+    if not user or user.role not in ("sysadmin", "owner", "admin"):
+        return RedirectResponse("/login", status_code=303)
+    from app.models.cash import CashCollection
+    stores = (await db.execute(select(Store).where(Store.is_active == True).order_by(Store.name))).scalars().all()
+    rows = (await db.execute(
+        select(CashCollection).order_by(CashCollection.created_at.desc()).limit(100)
+    )).scalars().all()
+    store_map = {s.id: s.name for s in stores}
+    items = []
+    for c in rows:
+        items.append({
+            "id": c.id,
+            "store": store_map.get(c.store_id, "—"),
+            "amount": float(c.amount),
+            "comment": c.comment or "",
+            "at": c.created_at,
+        })
+    return templates.TemplateResponse("collections.html", {
+        "request": request, "user": user, "stores": stores, "items": items,
+        "success": request.session.pop("flash_success", None),
+        "error": request.session.pop("flash_error", None),
+    })
+
+
+@app.post("/collections/create")
+async def collections_create(
+    request: Request,
+    store_id: int = Form(...),
+    amount: str = Form(...),
+    comment: str = Form(""),
+    db: AsyncSession = Depends(get_db),
+):
+    user = await get_current_web_user(request, db)
+    if not user or user.role not in ("sysadmin", "owner", "admin"):
+        return RedirectResponse("/login", status_code=303)
+    from app.models.cash import CashCollection
+    from app.services.notify import notify_owners
+    from decimal import Decimal
+    try:
+        amt = Decimal(str(amount).replace(",", "."))
+        if amt <= 0:
+            raise ValueError("sum")
+    except Exception:
+        request.session["flash_error"] = "Сумма должна быть больше 0"
+        return RedirectResponse("/collections", status_code=303)
+    store = await db.get(Store, store_id)
+    if not store:
+        return RedirectResponse("/collections", status_code=303)
+    db.add(CashCollection(
+        store_id=store_id, user_id=user.id, amount=amt,
+        comment=comment.strip() or None,
+    ))
+    await db.commit()
+    await notify_owners(
+        db,
+        f"💵 <b>Инкассация</b>\\n"
+        f"Магазин: <b>{store.name}</b>\\n"
+        f"Сумма: <b>{int(amt)} ₽</b>\\n"
+        f"Кто: {user.full_name or user.username}"
+        + (f"\\n{comment.strip()}" if comment.strip() else ""),
+    )
+    request.session["flash_success"] = f"Инкассация {int(amt)} ₽ — {store.name}"
+    return RedirectResponse("/collections", status_code=303)
 
