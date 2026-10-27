@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     # Публичный URL сайта для magic-ссылок из бота (https://xxx.onrender.com)
     WEB_BASE_URL: str = ""
+    EVOTOR_TOKEN: str = ""
 
     @field_validator("DATABASE_URL", mode="before")
     @classmethod
