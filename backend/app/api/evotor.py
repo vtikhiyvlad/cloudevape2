@@ -1,5 +1,4 @@
 """Endpoints for manually testing and managing Evotor integration."""
-import os
 from datetime import datetime, timezone
 from pydantic import BaseModel, Field
 from fastapi import APIRouter, Depends, HTTPException
@@ -8,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.core.database import get_db
+from app.core.config import get_settings
 from app.models.user import User
 from app.models.store import Store
 from app.models.evotor import EvotorDocument, EvotorProductMapping
@@ -45,7 +45,7 @@ async def sync_documents(
 ):
     """Однократный ручной запуск импорта; сначала использовать на тестовой точке."""
     require_manager(user)
-    token = os.getenv("EVOTOR_TOKEN", "").strip()
+    token = get_settings().EVOTOR_TOKEN.strip()
     if not token:
         raise HTTPException(
             status_code=503,
