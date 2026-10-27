@@ -21,13 +21,17 @@ def keyboard_for(role: str) -> ReplyKeyboardMarkup:
         return ReplyKeyboardMarkup(
             keyboard=[
                 [KeyboardButton(text="🛒 Касса"), KeyboardButton(text="⚙️ Админка")],
+                [KeyboardButton(text="📦 Склад")],
                 [KeyboardButton(text="ℹ️ Помощь")],
             ],
             resize_keyboard=True,
         )
     if role == WAREHOUSE:
         return ReplyKeyboardMarkup(
-            keyboard=[[KeyboardButton(text="📦 Склад")], [KeyboardButton(text="ℹ️ Помощь")]],
+            keyboard=[
+                [KeyboardButton(text="📦 Склад"), KeyboardButton(text="🛒 Касса")],
+                [KeyboardButton(text="ℹ️ Помощь")],
+            ],
             resize_keyboard=True,
         )
     return ReplyKeyboardMarkup(
@@ -48,17 +52,13 @@ async def cmd_start(message: Message):
 
         if not user:
             user = User(
-                telegram_id=tg_id,
-                full_name=full_name,
-                username=username,
-                role=SELLER,
-                is_active=True,
+                telegram_id=tg_id, full_name=full_name, username=username,
+                role=SELLER, is_active=True,
             )
             session.add(user)
             await session.commit()
             await message.answer(
-                f"Привет, {full_name}!\nID: <code>{tg_id}</code>\n"
-                "Передай ID владельцу для привязки к магазину.",
+                f"Привет, {full_name}!\nID: <code>{tg_id}</code>\nПередай ID владельцу.",
                 reply_markup=keyboard_for(SELLER),
             )
             return
@@ -68,17 +68,16 @@ async def cmd_start(message: Message):
             await session.commit()
 
         role = user.role or SELLER
-        if role in (OWNER, SYSADMIN, ADMIN):
+        if role == WAREHOUSE:
             await message.answer(
                 f"Привет, <b>{user.full_name}</b>!\n"
-                "Нажми <b>Касса</b> или <b>Админка</b> — пришлю ссылку для входа (5 мин).",
+                "📦 <b>Склад</b> — все магазины\n🛒 <b>Касса</b> — продажи",
                 reply_markup=keyboard_for(role),
             )
             return
-
-        if role == WAREHOUSE:
+        if role in (OWNER, SYSADMIN, ADMIN):
             await message.answer(
-                f"Привет, <b>{user.full_name}</b>!\nКнопка <b>Склад</b> — ссылка на товары.",
+                f"Привет, <b>{user.full_name}</b>!\nКасса / Админка / Склад — одноразовые ссылки.",
                 reply_markup=keyboard_for(role),
             )
             return
@@ -93,11 +92,9 @@ async def cmd_start(message: Message):
                 reply_markup=keyboard_for(SELLER),
             )
             return
-
         stores = ", ".join(l.Store.name for l in links)
         await message.answer(
-            f"Привет, <b>{user.full_name}</b>!\nМагазин: <b>{stores}</b>\n"
-            "Нажми <b>Касса</b> — пришлю одноразовую ссылку.",
+            f"Привет, <b>{user.full_name}</b>!\nМагазин: <b>{stores}</b>\nНажми <b>Касса</b>.",
             reply_markup=keyboard_for(SELLER),
         )
 
@@ -105,9 +102,8 @@ async def cmd_start(message: Message):
 async def send_magic_link(message: Message, destination: str, label: str):
     base = (settings.WEB_BASE_URL or "").rstrip("/")
     if not base:
-        await message.answer("На сервере не задан WEB_BASE_URL.")
+        await message.answer("WEB_BASE_URL не задан.")
         return
-
     tg_id = message.from_user.id
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(User).where(User.telegram_id == tg_id))
@@ -115,8 +111,6 @@ async def send_magic_link(message: Message, destination: str, label: str):
         if not user or not user.is_active:
             await message.answer("Сначала /start")
             return
-
-        # антиспам 15 сек
         recent = await session.execute(
             select(LoginCode).where(LoginCode.user_id == user.id)
             .order_by(LoginCode.created_at.desc()).limit(1)
@@ -124,35 +118,26 @@ async def send_magic_link(message: Message, destination: str, label: str):
         last = recent.scalar_one_or_none()
         if last and last.created_at:
             created = last.created_at if last.created_at.tzinfo else last.created_at.replace(tzinfo=timezone.utc)
-            if datetime.now(timezone.utc) - created < timedelta(seconds=15):
+            if datetime.now(timezone.utc) - created < timedelta(seconds=12):
                 await message.answer("Подожди пару секунд…")
                 return
-
         old = await session.execute(
             select(LoginCode).where(LoginCode.user_id == user.id, LoginCode.used == False)
         )
         for c in old.scalars().all():
             c.used = True
-
         token = new_login_token()
         session.add(LoginCode(
-            user_id=user.id,
-            code=token,
-            expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
-            used=False,
+            user_id=user.id, code=token,
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=5), used=False,
         ))
         await session.commit()
-
     url = f"{base}/auth/magic?t={token}&to={destination}"
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=label, url=url)]])
-    await message.answer(
-        "Ссылка действует <b>5 минут</b>, один раз.\nНикому не пересылай.",
-        reply_markup=kb,
-    )
+    await message.answer("Ссылка <b>5 минут</b>, один раз. Никому не пересылай.", reply_markup=kb)
 
 
 @router.message(F.text == "🛒 Касса")
-@router.message(F.text == "🛒 Открыть кассу")
 async def btn_sell(message: Message):
     await send_magic_link(message, "sell", "🚀 Открыть кассу")
 
@@ -170,8 +155,4 @@ async def btn_wh(message: Message):
 @router.message(F.text == "ℹ️ Помощь")
 @router.message(Command("help"))
 async def help_cmd(message: Message):
-    await message.answer(
-        "<b>CloudVape</b>\n"
-        "Вход только по одноразовой ссылке из этого бота.\n"
-        "Продажи — на сайте после перехода по ссылке."
-    )
+    await message.answer("CloudVape — вход по одноразовой ссылке из бота.")

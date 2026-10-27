@@ -11,7 +11,7 @@ class Category(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     store_id: Mapped[int] = mapped_column(ForeignKey("stores.id", ondelete="CASCADE"), index=True)
-    name: Mapped[str] = mapped_column(String(100), nullable=False)  # Жидкости, Одноразки...
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -21,13 +21,13 @@ class Category(Base):
 
 
 class Product(Base):
-    """Товар (например Nasty Juice Mango)"""
     __tablename__ = "products"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     store_id: Mapped[int] = mapped_column(ForeignKey("stores.id", ondelete="CASCADE"), index=True)
     category_id: Mapped[int] = mapped_column(ForeignKey("categories.id", ondelete="SET NULL"), nullable=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
+    brand: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)  # производитель / линейка
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -43,7 +43,6 @@ class Product(Base):
 
 
 class ProductVariant(Base):
-    """Конкретный вариант товара: крепость + вкус + цена + остаток"""
     __tablename__ = "product_variants"
     __table_args__ = (
         UniqueConstraint("product_id", "strength", "flavor", name="uq_variant"),
@@ -51,19 +50,13 @@ class ProductVariant(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id", ondelete="CASCADE"), index=True)
-    
-    # Параметры варианта (для жидкостей)
-    strength: Mapped[str | None] = mapped_column(String(50), nullable=True)  # 3 мг, 6 мг, 20 мг...
-    flavor: Mapped[str | None] = mapped_column(String(100), nullable=True)   # Mango, Blue Razz...
-    
-    # Дополнительные атрибуты (можно использовать гибко)
-    attr1: Mapped[str | None] = mapped_column(String(100), nullable=True)  # объём, цвет и т.д.
+    strength: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    flavor: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    attr1: Mapped[str | None] = mapped_column(String(100), nullable=True)
     attr2: Mapped[str | None] = mapped_column(String(100), nullable=True)
-
     price: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False, default=0)
     stock: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     low_stock_threshold: Mapped[int] = mapped_column(Integer, default=3)
-
     sku: Mapped[str | None] = mapped_column(String(50), nullable=True)
     barcode: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)

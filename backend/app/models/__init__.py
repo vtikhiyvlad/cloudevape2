@@ -5,19 +5,10 @@ from app.models.inventory import StockMovement
 from app.models.sale import Sale, SaleItem
 from app.models.login_code import LoginCode
 from app.models.inventory_task import InventoryTask, InventoryCount, InventoryLine
+from app.models.settings import AppSetting
 
 __all__ = [
-    "User",
-    "Store",
-    "StoreUser",
-    "Category",
-    "Product",
-    "ProductVariant",
-    "StockMovement",
-    "Sale",
-    "SaleItem",
-    "LoginCode",
-    "InventoryTask",
-    "InventoryCount",
-    "InventoryLine",
+    "User", "Store", "StoreUser", "Category", "Product", "ProductVariant",
+    "StockMovement", "Sale", "SaleItem", "LoginCode",
+    "InventoryTask", "InventoryCount", "InventoryLine", "AppSetting",
 ]

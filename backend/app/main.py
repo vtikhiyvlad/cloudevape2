@@ -60,6 +60,27 @@ async def create_owner_if_not_exists():
 
 
 
+
+
+async def get_payment_settings(db: AsyncSession) -> dict:
+    from app.models.settings import AppSetting
+    defaults = {"cash": True, "card": True, "combo": True}
+    for key in list(defaults.keys()):
+        row = await db.get(AppSetting, f"pay_{key}")
+        if row is not None:
+            defaults[key] = row.value not in ("0", "false", "False", "")
+    return defaults
+
+
+async def set_payment_setting(db: AsyncSession, key: str, enabled: bool):
+    from app.models.settings import AppSetting
+    k = f"pay_{key}"
+    row = await db.get(AppSetting, k)
+    if not row:
+        db.add(AppSetting(key=k, value="1" if enabled else "0"))
+    else:
+        row.value = "1" if enabled else "0"
+
 async def keep_alive_loop():
     """Пинг своего /health, чтобы реже засыпать (нужен внешний URL)."""
     url = os.environ.get("KEEP_ALIVE_URL") or os.environ.get("RENDER_EXTERNAL_URL")
@@ -90,6 +111,16 @@ async def lifespan(app: FastAPI):
                 await conn.execute(sql_text("ALTER TABLE login_codes ALTER COLUMN code TYPE VARCHAR(64)"))
             except Exception as e:
                 print("login_codes migrate:", e)
+            for stmt in [
+                "ALTER TABLE products ADD COLUMN IF NOT EXISTS brand VARCHAR(100)",
+                "ALTER TABLE sales ADD COLUMN IF NOT EXISTS payment_type VARCHAR(20) DEFAULT 'cash'",
+                "ALTER TABLE sales ADD COLUMN IF NOT EXISTS payment_cash NUMERIC(12,2) DEFAULT 0",
+                "ALTER TABLE sales ADD COLUMN IF NOT EXISTS payment_card NUMERIC(12,2) DEFAULT 0",
+            ]:
+                try:
+                    await conn.execute(sql_text(stmt))
+                except Exception as e:
+                    print("migrate:", e)
         except Exception as e:
             print("barcode migrate:", e)
     await create_owner_if_not_exists()
@@ -197,7 +228,7 @@ async def home(request: Request, db: AsyncSession = Depends(get_db)):
     if user.role == "seller":
         return RedirectResponse("/sell", status_code=303)
     if user.role == "warehouse":
-        return RedirectResponse("/products", status_code=303)
+        return RedirectResponse("/warehouse-hub", status_code=303)
     return templates.TemplateResponse("dashboard.html", {"request": request, "user": user})
 
 
@@ -347,12 +378,14 @@ async def auth_magic(request: Request, t: str = "", to: str = "sell", db: AsyncS
     request.session["login_at"] = datetime.now(timezone.utc).isoformat()
 
     dest = (to or "sell").strip().lower()
+    if dest == "warehouse" and user.role in ("sysadmin", "owner", "admin", "warehouse"):
+        return RedirectResponse("/warehouse-hub", status_code=303)
     if dest == "admin" and user.role in ("sysadmin", "owner", "admin"):
         return RedirectResponse("/", status_code=303)
-    if dest == "warehouse" or user.role == "warehouse":
-        return RedirectResponse("/products", status_code=303)
-    if dest == "sell" or user.role in ("seller", "admin", "owner", "sysadmin"):
+    if dest == "sell" or user.role in ("seller", "admin", "owner", "sysadmin", "warehouse"):
         return RedirectResponse("/sell", status_code=303)
+    if user.role == "warehouse":
+        return RedirectResponse("/warehouse-hub", status_code=303)
     return RedirectResponse("/", status_code=303)
 
 
@@ -804,6 +837,7 @@ async def product_create(
     category_id: str = Form(""),
     new_category: str = Form(""),
     name: str = Form(...),
+    brand: str = Form(""),
     strength: str = Form(""),
     flavor: str = Form(""),
     price: float = Form(...),
@@ -812,7 +846,7 @@ async def product_create(
     db: AsyncSession = Depends(get_db),
 ):
     user = await get_current_web_user(request, db)
-    if not user:
+    if not user or user.role not in ("sysadmin", "owner", "admin", "warehouse"):
         return RedirectResponse("/login", status_code=303)
 
     from app.models.product import Category, Product, ProductVariant
@@ -843,9 +877,11 @@ async def product_create(
     )
     product = prod_result.scalar_one_or_none()
     if not product:
-        product = Product(store_id=store_id, category_id=cat.id, name=name.strip())
+        product = Product(store_id=store_id, category_id=cat.id, name=name.strip(), brand=(brand.strip() or None))
         db.add(product)
         await db.flush()
+    elif brand.strip() and not product.brand:
+        product.brand = brand.strip()
 
     strength_val = strength.strip() or None
     flavor_val = flavor.strip() or None
@@ -1061,6 +1097,8 @@ async def sell_page(
     request: Request,
     q: str | None = None,
     category_id: int | None = None,
+    brand: str | None = None,
+    strength: str | None = None,
     db: AsyncSession = Depends(get_db),
 ):
     user = await get_current_web_user(request, db)
@@ -1112,6 +1150,10 @@ async def sell_page(
     )
     if category_id:
         vq = vq.where(Product.category_id == category_id)
+    if brand:
+        vq = vq.where(Product.brand == brand)
+    if strength:
+        vq = vq.where(ProductVariant.strength == strength)
     if q and q.strip():
         qq = f"%{q.strip()}%"
         from sqlalchemy import or_
@@ -1147,17 +1189,48 @@ async def sell_page(
         request.session["cart"] = cart
         return RedirectResponse("/sell", status_code=303)
 
+    # Подгруппы: бренды и крепости в выбранной категории
+    brands = []
+    strengths = []
+    if category_id and not q:
+        bq = await db.execute(
+            select(Product.brand).where(
+                Product.store_id == sid, Product.category_id == category_id,
+                Product.is_active == True, Product.brand.isnot(None), Product.brand != "",
+            ).distinct().order_by(Product.brand)
+        )
+        brands = [b for b in bq.scalars().all() if b]
+        if brand:
+            sq = (
+                select(ProductVariant.strength)
+                .join(Product)
+                .where(
+                    Product.store_id == sid, Product.category_id == category_id,
+                    Product.brand == brand, Product.is_active == True,
+                    ProductVariant.is_active == True, ProductVariant.stock > 0,
+                    ProductVariant.strength.isnot(None), ProductVariant.strength != "",
+                ).distinct().order_by(ProductVariant.strength)
+            )
+            strengths = [s for s in (await db.execute(sq)).scalars().all() if s]
+            # фильтр списка товаров
+            products = [p for p in products if True]  # already filtered below if we add to query
+    pay = await get_payment_settings(db)
     return templates.TemplateResponse("sell.html", {
         "request": request,
         "user": user,
         "store_name": store_name,
         "categories": cats,
         "products": products,
+        "brands": brands,
+        "strengths": strengths,
+        "brand": brand or "",
+        "strength": strength or "",
         "cart": cart,
         "cart_total": cart_total,
         "shift_total": shift_total,
         "q": q or "",
         "category_id": category_id,
+        "pay": pay,
         "success": success,
         "error": error,
     })
@@ -1219,7 +1292,13 @@ async def sell_cart_remove(request: Request, index: int = Form(...)):
 
 
 @app.post("/sell/checkout")
-async def sell_checkout(request: Request, db: AsyncSession = Depends(get_db)):
+async def sell_checkout(
+    request: Request,
+    payment_type: str = Form("cash"),
+    payment_cash: str = Form("0"),
+    payment_card: str = Form("0"),
+    db: AsyncSession = Depends(get_db),
+):
     user = await get_current_web_user(request, db)
     if not user:
         return RedirectResponse("/login", status_code=303)
@@ -1227,36 +1306,50 @@ async def sell_checkout(request: Request, db: AsyncSession = Depends(get_db)):
     cart = request.session.get("cart") or []
     if not sid or not cart:
         return RedirectResponse("/sell", status_code=303)
+
+    pay = await get_payment_settings(db)
+    payment_type = (payment_type or "cash").lower()
+    if payment_type == "cash" and not pay["cash"]:
+        payment_type = "card" if pay["card"] else "combo"
+    if payment_type == "card" and not pay["card"]:
+        payment_type = "cash" if pay["cash"] else "combo"
+    if payment_type == "combo" and not pay["combo"]:
+        payment_type = "cash" if pay["cash"] else "card"
+
     from app.services.inventory import create_sale, InsufficientStockError
-    items = [{"variant_id": i["variant_id"], "quantity": int(i["qty"])} for i in cart]
+    from decimal import Decimal
+    items = [{"variant_id": int(i["variant_id"]), "quantity": int(i["qty"])} for i in cart]
     try:
-        sale = await create_sale(session=db, store_id=sid, seller_id=user.id, items=items)
+        sale = await create_sale(db, sid, user.id, items)
+        total = float(sale.total_amount)
+        try:
+            cash_amt = float(payment_cash or 0)
+            card_amt = float(payment_card or 0)
+        except ValueError:
+            cash_amt, card_amt = 0.0, 0.0
+        if payment_type == "cash":
+            sale.payment_type, sale.payment_cash, sale.payment_card = "cash", Decimal(str(total)), Decimal("0")
+        elif payment_type == "card":
+            sale.payment_type, sale.payment_cash, sale.payment_card = "card", Decimal("0"), Decimal(str(total))
+        else:
+            if abs(cash_amt + card_amt - total) > 0.05:
+                cash_amt = total
+                card_amt = 0.0
+            sale.payment_type = "combo"
+            sale.payment_cash = Decimal(str(round(cash_amt, 2)))
+            sale.payment_card = Decimal(str(round(card_amt, 2)))
         await db.commit()
         request.session["cart"] = []
-        request.session["last_sale_id"] = sale.id
-        # low stock alerts
-        try:
-            from app.services.notify import notify_low_stock
-            owners = (await db.execute(select(User).where(User.role == "owner", User.telegram_id.isnot(None)))).scalars().all()
-            for it in items:
-                v = await db.get(ProductVariant, it["variant_id"])
-                if v and v.stock <= v.low_stock_threshold:
-                    await db.refresh(v, ["product"])
-                    label = (v.product.name if v.product else "") + " " + " ".join(filter(None, [v.strength, v.flavor]))
-                    for o in owners:
-                        await notify_low_stock(o.telegram_id, store_name or "", label.strip(), v.stock)
-        except Exception as ex:
-            print("low stock notify:", ex)
-        return RedirectResponse(f"/sell?ok={int(sale.total_amount)}&check={sale.id}", status_code=303)
+        return RedirectResponse(f"/sell?ok={int(total)}&check={sale.id}", status_code=303)
     except InsufficientStockError as e:
-        await db.rollback()
-        # show error via redirect query is messy — use session flash
-        request.session["flash_error"] = f"Недостаточно «{e.variant_name}». Доступно: {e.available}"
-        return RedirectResponse("/sell", status_code=303)
-    except Exception as e:
         await db.rollback()
         request.session["flash_error"] = str(e)
         return RedirectResponse("/sell", status_code=303)
+    except Exception as e:
+        await db.rollback()
+        request.session["flash_error"] = f"Ошибка: {e}"
+        return RedirectResponse("/sell", status_code=303)
+
 
 
 @app.post("/sell/clear-cart")
@@ -1804,7 +1897,11 @@ async def settings_page(request: Request, db: AsyncSession = Depends(get_db)):
     user = await get_current_web_user(request, db)
     if not user or user.role != "owner":
         return RedirectResponse("/", status_code=303)
-    return templates.TemplateResponse("settings.html", {"request": request, "user": user})
+    pay = await get_payment_settings(db)
+    return templates.TemplateResponse("settings.html", {
+        "request": request, "user": user, "pay": pay,
+        "success": request.session.pop("flash_success", None),
+    })
 
 
 @app.post("/settings/telegram")
@@ -1823,3 +1920,92 @@ async def settings_telegram(
     user.telegram_id = tid
     await db.commit()
     return RedirectResponse("/settings", status_code=303)
+
+
+@app.post("/products/delete")
+async def products_delete(
+    request: Request,
+    product_id: int = Form(...),
+    scope: str = Form("store"),
+    force: str = Form("0"),
+    db: AsyncSession = Depends(get_db),
+):
+    user = await get_current_web_user(request, db)
+    if not user or user.role not in ("sysadmin", "owner", "admin", "warehouse"):
+        return RedirectResponse("/login", status_code=303)
+    product = await db.get(Product, product_id)
+    if not product:
+        return RedirectResponse("/products", status_code=303)
+    store_id = product.store_id
+    if scope == "all":
+        q = select(Product).where(Product.name == product.name, Product.is_active == True)
+        if product.brand:
+            q = q.where(Product.brand == product.brand)
+        products = (await db.execute(q)).scalars().all()
+    else:
+        products = [product]
+    stock_report = []
+    total_stock = 0
+    for p in products:
+        vars_ = (await db.execute(select(ProductVariant).where(ProductVariant.product_id == p.id, ProductVariant.is_active == True))).scalars().all()
+        st = sum(v.stock for v in vars_)
+        total_stock += st
+        if st > 0:
+            store = await db.get(Store, p.store_id)
+            stock_report.append(f"{store.name if store else p.store_id}: {st} шт")
+    if total_stock > 0 and force != "1":
+        request.session["flash_error"] = (
+            f"Остатки {total_stock} шт (" + "; ".join(stock_report) +
+            "). Сначала обнулите или отметьте принудительное снятие."
+        )
+        return RedirectResponse(f"/products?store_id={store_id}", status_code=303)
+    for p in products:
+        p.is_active = False
+        for v in (await db.execute(select(ProductVariant).where(ProductVariant.product_id == p.id))).scalars().all():
+            v.is_active = False
+    await db.commit()
+    request.session["flash_success"] = f"Снято: {len(products)} тов."
+    return RedirectResponse(f"/products?store_id={store_id}", status_code=303)
+
+
+@app.get("/warehouse-hub", response_class=HTMLResponse)
+async def warehouse_hub(request: Request, store_id: int | None = None, db: AsyncSession = Depends(get_db)):
+    user = await get_current_web_user(request, db)
+    if not user or user.role not in ("sysadmin", "owner", "admin", "warehouse"):
+        return RedirectResponse("/login", status_code=303)
+    stores = (await db.execute(select(Store).where(Store.is_active == True).order_by(Store.name))).scalars().all()
+    if not store_id and stores:
+        store_id = stores[0].id
+    products_out = []
+    if store_id:
+        result = await db.execute(
+            select(Product).options(selectinload(Product.variants), selectinload(Product.category))
+            .where(Product.store_id == store_id, Product.is_active == True).order_by(Product.brand, Product.name)
+        )
+        for p in result.scalars().all():
+            stock = sum(v.stock for v in p.variants if v.is_active)
+            products_out.append({
+                "id": p.id, "name": p.name, "brand": p.brand or "—",
+                "category": p.category.name if p.category else "—",
+                "stock": stock, "variants": len([v for v in p.variants if v.is_active]),
+            })
+    return templates.TemplateResponse("warehouse_hub.html", {
+        "request": request, "user": user, "stores": stores, "store_id": store_id,
+        "products": products_out,
+        "success": request.session.pop("flash_success", None),
+        "error": request.session.pop("flash_error", None),
+    })
+
+
+@app.post("/settings/payments")
+async def settings_payments(request: Request, db: AsyncSession = Depends(get_db)):
+    user = await get_current_web_user(request, db)
+    if not user or user.role not in ("sysadmin", "owner"):
+        return RedirectResponse("/login", status_code=303)
+    form = await request.form()
+    for key in ("cash", "card", "combo"):
+        await set_payment_setting(db, key, form.get(f"pay_{key}") == "on")
+    await db.commit()
+    request.session["flash_success"] = "Типы оплаты сохранены"
+    return RedirectResponse("/settings", status_code=303)
+

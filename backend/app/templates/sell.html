@@ -1,184 +1,223 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <meta name="theme-color" content="#0f172a">
-    <title>Касса — CloudVape</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
-    <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
-        .product-card:active { transform: scale(0.98); }
-        #reader { width: 100%; border-radius: 12px; overflow: hidden; }
-        .safe-bottom { padding-bottom: calc(72px + env(safe-area-inset-bottom)); }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b1220">
+<title>Касса — CloudVape</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<style>
+  body { font-family: Inter, system-ui, -apple-system, sans-serif; }
+  .safe-bottom { padding-bottom: calc(76px + env(safe-area-inset-bottom)); }
+  .chip { @apply shrink-0 px-3.5 py-1.5 rounded-full text-sm font-medium transition; }
+</style>
 </head>
-<body class="bg-slate-50 min-h-screen text-slate-900 safe-bottom">
-<!-- Top bar -->
-<header class="bg-slate-900 text-white px-4 py-3 sticky top-0 z-20">
-    <div class="flex justify-between items-center max-w-6xl mx-auto">
-        <div>
-            <div class="font-semibold text-sm tracking-tight">CloudVape</div>
-            <div class="text-xs text-slate-400">{{ store_name }} · {{ user.full_name or user.username }}</div>
-        </div>
-        <div class="flex items-center gap-2">
-            <div class="bg-slate-800 rounded-lg px-2.5 py-1 text-xs">
-                <span class="text-slate-400">Смена</span>
-                <span class="font-semibold ml-1">{{ shift_total | int }}₽</span>
-            </div>
-            <a href="/logout" class="text-xs text-red-400 px-2">Выйти</a>
-        </div>
+<body class="bg-slate-100 text-slate-900 min-h-screen safe-bottom">
+<header class="bg-slate-950 text-white px-4 py-3 sticky top-0 z-20">
+  <div class="max-w-6xl mx-auto flex justify-between items-center gap-3">
+    <div class="min-w-0">
+      <div class="font-semibold tracking-tight">Касса</div>
+      <div class="text-xs text-slate-400 truncate">{{ store_name }} · {{ user.full_name or user.username }}</div>
     </div>
+    <div class="flex items-center gap-2">
+      <div class="bg-white/10 rounded-xl px-3 py-1.5 text-xs">
+        <span class="text-slate-400">Смена</span>
+        <span class="font-semibold ml-1">{{ shift_total | int }}₽</span>
+      </div>
+      {% if user.role in ['warehouse','owner','admin','sysadmin'] %}
+      <a href="/warehouse-hub" class="text-xs text-indigo-300 hidden sm:inline">Склад</a>
+      {% endif %}
+      <a href="/logout" class="text-xs text-red-400">Выйти</a>
+    </div>
+  </div>
 </header>
 
-{% if success %}
-<div class="bg-emerald-500 text-white text-center py-2.5 text-sm font-medium">{{ success }}</div>
-{% endif %}
-{% if error %}
-<div class="bg-red-500 text-white text-center py-2.5 text-sm font-medium">{{ error }}</div>
-{% endif %}
+{% if success %}<div class="bg-emerald-500 text-white text-center py-2.5 text-sm font-medium">{{ success }}</div>{% endif %}
+{% if error %}<div class="bg-red-500 text-white text-center py-2.5 text-sm font-medium">{{ error }}</div>{% endif %}
 
-<div class="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-5 gap-0 lg:gap-4 lg:p-4">
-    <!-- Catalog -->
-    <div class="lg:col-span-3 p-3 space-y-3">
-        <form method="get" action="/sell" class="flex gap-2">
-            <input type="hidden" name="category_id" value="{{ category_id or '' }}">
-            <input type="search" name="q" value="{{ q or '' }}" autofocus id="searchInput"
-                   placeholder="Поиск или 📷 штрихкод"
-                   class="flex-1 bg-white border border-slate-200 rounded-2xl px-4 py-3 text-base shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
-            <button type="submit" class="bg-slate-900 text-white px-4 rounded-2xl font-medium text-sm">OK</button>
-            <button type="button" onclick="toggleScanner()" class="bg-indigo-600 text-white w-12 rounded-2xl text-lg" title="Камера">📷</button>
-        </form>
-
-        <div id="scannerBox" class="hidden bg-slate-900 rounded-2xl overflow-hidden p-2">
-            <div id="reader"></div>
-            <button type="button" onclick="toggleScanner()" class="w-full bg-red-500 text-white py-2 text-sm rounded-xl mt-2">Закрыть</button>
-        </div>
-
-        <div class="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
-            <a href="/sell" class="shrink-0 px-3.5 py-1.5 rounded-full text-sm font-medium {% if not category_id %}bg-slate-900 text-white{% else %}bg-white border border-slate-200 text-slate-600{% endif %}">Все</a>
-            {% for c in categories %}
-            <a href="/sell?category_id={{ c.id }}" class="shrink-0 px-3.5 py-1.5 rounded-full text-sm font-medium {% if category_id == c.id %}bg-slate-900 text-white{% else %}bg-white border border-slate-200 text-slate-600{% endif %}">{{ c.name }}</a>
-            {% endfor %}
-        </div>
-
-        <div class="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-            {% for item in products %}
-            <form method="post" action="/sell/add" class="product-card">
-                <input type="hidden" name="variant_id" value="{{ item.variant_id }}">
-                <input type="hidden" name="qty" value="1">
-                <button type="submit" class="w-full text-left bg-white rounded-2xl p-3.5 shadow-sm border border-slate-100 hover:border-indigo-300 h-full transition">
-                    <div class="font-medium text-sm leading-snug mb-1 line-clamp-2">{{ item.product_name }}</div>
-                    <div class="text-xs text-slate-500 mb-3 min-h-[1rem]">
-                        {% if item.strength or item.flavor %}
-                        {{ item.strength or '' }}{% if item.strength and item.flavor %} · {% endif %}{{ item.flavor or '' }}
-                        {% endif %}
-                    </div>
-                    <div class="flex justify-between items-end">
-                        <span class="font-bold text-base">{{ item.price | int }}₽</span>
-                        <span class="text-xs font-medium px-1.5 py-0.5 rounded-md {% if item.stock <= 0 %}bg-red-50 text-red-600{% elif item.stock <= 3 %}bg-amber-50 text-amber-700{% else %}bg-emerald-50 text-emerald-700{% endif %}">
-                            {{ item.stock }} шт
-                        </span>
-                    </div>
-                </button>
-            </form>
-            {% else %}
-            <div class="col-span-full bg-white rounded-2xl p-10 text-center text-slate-400 text-sm border border-dashed border-slate-200">
-                {% if q %}Ничего не найдено{% else %}Нет товаров в наличии{% endif %}
-            </div>
-            {% endfor %}
-        </div>
+<div class="max-w-6xl mx-auto lg:grid lg:grid-cols-5 lg:gap-4 lg:p-4">
+  <div class="lg:col-span-3 p-3 space-y-3">
+    <form method="get" action="/sell" class="flex gap-2">
+      {% if category_id %}<input type="hidden" name="category_id" value="{{ category_id }}">{% endif %}
+      {% if brand %}<input type="hidden" name="brand" value="{{ brand }}">{% endif %}
+      {% if strength %}<input type="hidden" name="strength" value="{{ strength }}">{% endif %}
+      <input type="search" name="q" value="{{ q or '' }}" placeholder="Поиск или штрихкод" id="searchInput"
+             class="flex-1 bg-white border border-slate-200 rounded-2xl px-4 py-3 text-base shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+      <button class="bg-slate-900 text-white px-4 rounded-2xl text-sm font-medium">OK</button>
+      <button type="button" onclick="toggleScanner()" class="bg-indigo-600 text-white w-12 rounded-2xl">📷</button>
+    </form>
+    <div id="scannerBox" class="hidden bg-slate-900 rounded-2xl p-2 overflow-hidden">
+      <div id="reader"></div>
+      <button type="button" onclick="toggleScanner()" class="w-full bg-red-500 text-white py-2 text-sm rounded-xl mt-2">Закрыть</button>
     </div>
 
-    <!-- Cart -->
-    <div class="lg:col-span-2 lg:sticky lg:top-16 lg:self-start bg-white lg:rounded-2xl lg:shadow-sm lg:border lg:border-slate-100 overflow-hidden">
-        <div class="px-4 py-3 border-b border-slate-100 flex justify-between items-center bg-slate-50/80">
-            <h2 class="font-semibold">Чек</h2>
-            <span class="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">{{ cart|length }} поз.</span>
+    <!-- Категории -->
+    <div class="flex gap-2 overflow-x-auto pb-1">
+      <a href="/sell" class="shrink-0 px-3.5 py-1.5 rounded-full text-sm font-medium {% if not category_id %}bg-slate-900 text-white{% else %}bg-white border border-slate-200{% endif %}">Все</a>
+      {% for c in categories %}
+      <a href="/sell?category_id={{ c.id }}" class="shrink-0 px-3.5 py-1.5 rounded-full text-sm font-medium {% if category_id == c.id and not brand %}bg-slate-900 text-white{% else %}bg-white border border-slate-200{% endif %}">{{ c.name }}</a>
+      {% endfor %}
+    </div>
+
+    <!-- Бренды -->
+    {% if brands and category_id and not q %}
+    <div>
+      <div class="text-xs text-slate-500 mb-1.5 px-0.5">Производитель</div>
+      <div class="flex gap-2 overflow-x-auto pb-1">
+        <a href="/sell?category_id={{ category_id }}" class="shrink-0 px-3.5 py-1.5 rounded-full text-sm {% if not brand %}bg-indigo-600 text-white{% else %}bg-white border{% endif %}">Все</a>
+        {% for b in brands %}
+        <a href="/sell?category_id={{ category_id }}&brand={{ b|urlencode }}" class="shrink-0 px-3.5 py-1.5 rounded-full text-sm {% if brand == b %}bg-indigo-600 text-white{% else %}bg-white border{% endif %}">{{ b }}</a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Крепости -->
+    {% if strengths and brand %}
+    <div>
+      <div class="text-xs text-slate-500 mb-1.5 px-0.5">Крепость / линейка</div>
+      <div class="flex gap-2 overflow-x-auto pb-1">
+        <a href="/sell?category_id={{ category_id }}&brand={{ brand|urlencode }}" class="shrink-0 px-3.5 py-1.5 rounded-full text-sm {% if not strength %}bg-violet-600 text-white{% else %}bg-white border{% endif %}">Все</a>
+        {% for s in strengths %}
+        <a href="/sell?category_id={{ category_id }}&brand={{ brand|urlencode }}&strength={{ s|urlencode }}" class="shrink-0 px-3.5 py-1.5 rounded-full text-sm {% if strength == s %}bg-violet-600 text-white{% else %}bg-white border{% endif %}">{{ s }}</a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <div class="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+      {% for item in products %}
+      <form method="post" action="/sell/add">
+        <input type="hidden" name="variant_id" value="{{ item.variant_id }}">
+        <input type="hidden" name="qty" value="1">
+        <button type="submit" class="w-full text-left bg-white rounded-2xl p-3.5 shadow-sm border border-slate-100 hover:border-indigo-300 active:scale-[0.98] transition h-full">
+          <div class="font-medium text-sm leading-snug line-clamp-2 mb-1">{{ item.product_name }}</div>
+          <div class="text-xs text-slate-500 mb-3 min-h-[1rem]">
+            {% if item.strength or item.flavor %}{{ item.strength or '' }}{% if item.strength and item.flavor %} · {% endif %}{{ item.flavor or '' }}{% endif %}
+          </div>
+          <div class="flex justify-between items-end">
+            <span class="font-bold">{{ item.price | int }}₽</span>
+            <span class="text-xs px-1.5 py-0.5 rounded-md {% if item.stock <= 3 %}bg-amber-50 text-amber-700{% else %}bg-emerald-50 text-emerald-700{% endif %}">{{ item.stock }}</span>
+          </div>
+        </button>
+      </form>
+      {% else %}
+      <div class="col-span-full bg-white rounded-2xl p-10 text-center text-slate-400 text-sm border border-dashed">Нет позиций</div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- Cart -->
+  <div class="lg:col-span-2 lg:sticky lg:top-16 lg:self-start">
+    <div class="bg-white lg:rounded-3xl lg:shadow-sm lg:border lg:border-slate-100 overflow-hidden">
+      <div class="px-4 py-3 border-b border-slate-100 flex justify-between bg-slate-50/80">
+        <h2 class="font-semibold">Чек</h2>
+        <span class="text-xs bg-slate-100 px-2 py-0.5 rounded-full text-slate-500">{{ cart|length }}</span>
+      </div>
+      <div class="max-h-52 lg:max-h-[40vh] overflow-y-auto divide-y">
+        {% for item in cart %}
+        <div class="px-4 py-3 flex gap-2 items-center">
+          <div class="flex-1 min-w-0">
+            <div class="font-medium text-sm truncate">{{ item.name }}</div>
+            <div class="text-xs text-slate-500">{{ item.price | int }}₽</div>
+          </div>
+          <form method="post" action="/sell/cart-qty" class="flex items-center gap-1">
+            <input type="hidden" name="index" value="{{ loop.index0 }}">
+            <button name="action" value="minus" class="w-8 h-8 rounded-xl bg-slate-100 font-bold">−</button>
+            <span class="w-6 text-center text-sm font-semibold">{{ item.qty }}</span>
+            <button name="action" value="plus" class="w-8 h-8 rounded-xl bg-slate-100 font-bold">+</button>
+          </form>
+          <div class="w-14 text-right text-sm font-semibold">{{ (item.price * item.qty) | int }}₽</div>
+          <form method="post" action="/sell/cart-remove">
+            <input type="hidden" name="index" value="{{ loop.index0 }}">
+            <button class="text-slate-300 hover:text-red-500 text-lg px-1">×</button>
+          </form>
         </div>
-        <div class="max-h-56 lg:max-h-[45vh] overflow-y-auto divide-y divide-slate-100">
-            {% for item in cart %}
-            <div class="px-4 py-3 flex gap-2 items-center">
-                <div class="flex-1 min-w-0">
-                    <div class="font-medium text-sm truncate">{{ item.name }}</div>
-                    <div class="text-xs text-slate-500">{{ item.price | int }}₽</div>
-                </div>
-                <form method="post" action="/sell/cart-qty" class="flex items-center gap-1">
-                    <input type="hidden" name="index" value="{{ loop.index0 }}">
-                    <button name="action" value="minus" class="w-8 h-8 rounded-xl bg-slate-100 font-bold text-slate-700">−</button>
-                    <span class="w-6 text-center font-semibold text-sm">{{ item.qty }}</span>
-                    <button name="action" value="plus" class="w-8 h-8 rounded-xl bg-slate-100 font-bold text-slate-700">+</button>
-                </form>
-                <div class="w-14 text-right font-semibold text-sm">{{ (item.price * item.qty) | int }}₽</div>
-                <form method="post" action="/sell/cart-remove">
-                    <input type="hidden" name="index" value="{{ loop.index0 }}">
-                    <button class="text-slate-300 hover:text-red-500 text-lg leading-none px-1">×</button>
-                </form>
-            </div>
-            {% else %}
-            <div class="px-4 py-12 text-center text-slate-400 text-sm">Добавьте товар или отсканируйте код</div>
-            {% endfor %}
+        {% else %}
+        <div class="px-4 py-12 text-center text-slate-400 text-sm">Добавьте товар</div>
+        {% endfor %}
+      </div>
+
+      {% if cart and cart|length > 0 %}
+      <div class="p-4 border-t space-y-3 bg-slate-50/40">
+        <div class="flex justify-between text-lg font-bold">
+          <span>Итого</span><span>{{ cart_total | int }} ₽</span>
         </div>
-        <div class="p-4 border-t border-slate-100 space-y-2.5 bg-slate-50/50">
-            <div class="flex justify-between text-lg font-bold">
-                <span>Итого</span>
-                <span>{{ cart_total | int }} ₽</span>
-            </div>
-            {% if cart and cart|length > 0 %}
-            <form method="post" action="/sell/checkout">
-                <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white py-3.5 rounded-2xl text-base font-bold shadow-sm transition">
-                    Оплатить {{ cart_total | int }} ₽
-                </button>
-            </form>
-            <form method="post" action="/sell/clear-cart">
-                <button type="submit" class="w-full text-slate-400 text-xs py-1">Очистить</button>
-            </form>
+        <form method="post" action="/sell/checkout" id="payForm" class="space-y-2">
+          <div class="grid grid-cols-3 gap-2">
+            {% if pay is not defined or pay.cash %}
+            <label class="cursor-pointer">
+              <input type="radio" name="payment_type" value="cash" class="peer sr-only" checked onchange="toggleCombo()">
+              <div class="peer-checked:bg-slate-900 peer-checked:text-white bg-white border rounded-xl py-2 text-center text-xs font-medium">Нал</div>
+            </label>
             {% endif %}
-        </div>
+            {% if pay is not defined or pay.card %}
+            <label class="cursor-pointer">
+              <input type="radio" name="payment_type" value="card" class="peer sr-only" onchange="toggleCombo()">
+              <div class="peer-checked:bg-slate-900 peer-checked:text-white bg-white border rounded-xl py-2 text-center text-xs font-medium">Карта</div>
+            </label>
+            {% endif %}
+            {% if pay is not defined or pay.combo %}
+            <label class="cursor-pointer">
+              <input type="radio" name="payment_type" value="combo" class="peer sr-only" onchange="toggleCombo()">
+              <div class="peer-checked:bg-slate-900 peer-checked:text-white bg-white border rounded-xl py-2 text-center text-xs font-medium">Комбо</div>
+            </label>
+            {% endif %}
+          </div>
+          <div id="comboFields" class="hidden grid grid-cols-2 gap-2">
+            <input type="number" name="payment_cash" step="0.01" min="0" placeholder="Нал ₽" class="border rounded-xl px-3 py-2 text-sm">
+            <input type="number" name="payment_card" step="0.01" min="0" placeholder="Карта ₽" class="border rounded-xl px-3 py-2 text-sm">
+          </div>
+          <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-3.5 rounded-2xl text-base font-bold shadow-sm">
+            Оплатить {{ cart_total | int }} ₽
+          </button>
+        </form>
+        <form method="post" action="/sell/clear-cart">
+          <button class="w-full text-slate-400 text-xs py-1">Очистить</button>
+        </form>
+      </div>
+      {% endif %}
     </div>
+  </div>
 </div>
 
-<!-- Bottom nav (seller workspace) -->
-<nav class="fixed bottom-0 inset-x-0 bg-white border-t border-slate-200 z-30 pb-[env(safe-area-inset-bottom)]">
-    <div class="max-w-lg mx-auto grid grid-cols-3 text-center">
-        <a href="/sell" class="py-3 {% if not inv_tab %}text-indigo-600{% else %}text-slate-400{% endif %}">
-            <div class="text-lg leading-none">💳</div>
-            <div class="text-[11px] font-medium mt-0.5">Касса</div>
-        </a>
-        <a href="/sell/inventory" class="py-3 {% if inv_tab %}text-indigo-600{% else %}text-slate-400{% endif %}">
-            <div class="text-lg leading-none">📋</div>
-            <div class="text-[11px] font-medium mt-0.5">Учёт</div>
-        </a>
-        <a href="/sell/shift" class="py-3 text-slate-400">
-            <div class="text-lg leading-none">📊</div>
-            <div class="text-[11px] font-medium mt-0.5">Смена</div>
-        </a>
-    </div>
+<nav class="fixed bottom-0 inset-x-0 bg-white/95 backdrop-blur border-t border-slate-200 z-30 pb-[env(safe-area-inset-bottom)]">
+  <div class="max-w-lg mx-auto grid {% if user.role in ['warehouse','owner','admin','sysadmin'] %}grid-cols-4{% else %}grid-cols-3{% endif %} text-center">
+    <a href="/sell" class="py-3 text-indigo-600">
+      <div class="text-lg">💳</div><div class="text-[11px] font-medium">Касса</div>
+    </a>
+    <a href="/sell/inventory" class="py-3 text-slate-400">
+      <div class="text-lg">📋</div><div class="text-[11px] font-medium">Учёт</div>
+    </a>
+    <a href="/sell/shift" class="py-3 text-slate-400">
+      <div class="text-lg">📊</div><div class="text-[11px] font-medium">Смена</div>
+    </a>
+    {% if user.role in ['warehouse','owner','admin','sysadmin'] %}
+    <a href="/warehouse-hub" class="py-3 text-slate-400">
+      <div class="text-lg">📦</div><div class="text-[11px] font-medium">Склад</div>
+    </a>
+    {% endif %}
+  </div>
 </nav>
-
 <script>
-const input = document.getElementById('searchInput');
-let html5QrCode = null;
-async function toggleScanner() {
-    const box = document.getElementById('scannerBox');
-    if (box.classList.contains('hidden')) {
-        box.classList.remove('hidden');
-        html5QrCode = new Html5Qrcode("reader");
-        html5QrCode.start(
-            { facingMode: "environment" },
-            { fps: 10, qrbox: { width: 250, height: 120 } },
-            (decoded) => {
-                html5QrCode.stop();
-                box.classList.add('hidden');
-                window.location.href = '/sell?q=' + encodeURIComponent(decoded);
-            },
-            () => {}
-        ).catch(err => { alert('Камера: ' + err); box.classList.add('hidden'); });
-    } else {
-        if (html5QrCode) try { await html5QrCode.stop(); } catch(e) {}
-        box.classList.add('hidden');
-    }
+function toggleCombo(){
+  const v=document.querySelector('input[name=payment_type]:checked');
+  document.getElementById('comboFields').classList.toggle('hidden', !(v&&v.value==='combo'));
+}
+let html5QrCode=null;
+async function toggleScanner(){
+  const box=document.getElementById('scannerBox');
+  if(box.classList.contains('hidden')){
+    box.classList.remove('hidden');
+    html5QrCode=new Html5Qrcode('reader');
+    html5QrCode.start({facingMode:'environment'},{fps:10,qrbox:{width:250,height:120}},
+      (d)=>{html5QrCode.stop();box.classList.add('hidden');location.href='/sell?q='+encodeURIComponent(d);},()=>{}
+    ).catch(e=>{alert(e);box.classList.add('hidden');});
+  } else {
+    if(html5QrCode) try{await html5QrCode.stop();}catch(e){}
+    box.classList.add('hidden');
+  }
 }
 </script>
 </body>

@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Склад — CloudVape{% endblock %}
+{% block content %}
+<div class="flex flex-col sm:flex-row sm:items-end justify-between gap-3 mb-6">
+  <div>
+    <h1 class="text-2xl sm:text-3xl font-bold tracking-tight">Склад</h1>
+    <p class="text-slate-500 text-sm mt-1">Остатки и товары по всем магазинам</p>
+  </div>
+  {% if store_id %}
+  <a href="/products/add?store_id={{ store_id }}" class="inline-flex justify-center bg-slate-900 text-white px-4 py-2.5 rounded-2xl text-sm font-medium">+ Товар</a>
+  {% endif %}
+</div>
+
+<div class="flex gap-2 overflow-x-auto pb-2 mb-4">
+  {% for s in stores %}
+  <a href="/warehouse-hub?store_id={{ s.id }}"
+     class="shrink-0 px-4 py-2 rounded-full text-sm font-medium {% if store_id == s.id %}bg-slate-900 text-white{% else %}bg-white border border-slate-200 text-slate-600{% endif %}">
+    {{ s.name }}
+  </a>
+  {% endfor %}
+</div>
+
+<div class="bg-white rounded-3xl shadow-sm border border-slate-200/80 overflow-hidden">
+  <div class="overflow-x-auto">
+    <table class="w-full text-sm min-w-[640px]">
+      <thead class="bg-slate-50 text-left text-slate-500">
+        <tr>
+          <th class="px-4 py-3 font-medium">Товар</th>
+          <th class="px-4 py-3 font-medium">Бренд</th>
+          <th class="px-4 py-3 font-medium">Категория</th>
+          <th class="px-4 py-3 font-medium">Варианты</th>
+          <th class="px-4 py-3 font-medium">Остаток</th>
+          <th class="px-4 py-3"></th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100">
+        {% for p in products %}
+        <tr class="hover:bg-slate-50/80">
+          <td class="px-4 py-3 font-medium">{{ p.name }}</td>
+          <td class="px-4 py-3 text-slate-600">{{ p.brand }}</td>
+          <td class="px-4 py-3 text-slate-600">{{ p.category }}</td>
+          <td class="px-4 py-3">{{ p.variants }}</td>
+          <td class="px-4 py-3">
+            <span class="font-semibold {% if p.stock <= 0 %}text-red-600{% elif p.stock <= 3 %}text-amber-600{% else %}text-emerald-600{% endif %}">{{ p.stock }}</span>
+          </td>
+          <td class="px-4 py-3 text-right space-x-2 whitespace-nowrap">
+            <a href="/products?store_id={{ store_id }}" class="text-indigo-600 hover:underline text-xs">Правка</a>
+            <form method="post" action="/products/delete" class="inline" onsubmit="return confirm('Снять товар с продажи в этом магазине?');">
+              <input type="hidden" name="product_id" value="{{ p.id }}">
+              <input type="hidden" name="scope" value="store">
+              <button class="text-xs text-red-500 hover:underline">Удалить</button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="px-4 py-12 text-center text-slate-400">Нет товаров</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
