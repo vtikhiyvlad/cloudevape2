@@ -2,26 +2,35 @@
 {% block title %}Товары — CloudVape{% endblock %}
 {% block content %}
 <div class="flex flex-wrap justify-between items-center gap-3 mb-6">
-    <h1 class="text-2xl font-bold">Товары и остатки</h1>
-    <div class="flex gap-2">
+    <div>
+        <h1 class="text-2xl font-bold tracking-tight">Товары и остатки</h1>
+        <p class="text-sm text-slate-500 mt-1">Редактирование, снятие с продажи</p>
+    </div>
+    <div class="flex flex-wrap gap-2">
         {% if store_id %}
         <a href="/products/template?store_id={{ store_id }}"
-           class="bg-white border border-gray-300 px-4 py-2 rounded-lg text-sm hover:bg-gray-50">
-            ↓ Шаблон Excel
-        </a>
+           class="bg-white border border-slate-200 px-4 py-2 rounded-2xl text-sm hover:bg-slate-50">↓ Шаблон Excel</a>
         <a href="/products/add?store_id={{ store_id }}"
-           class="bg-slate-900 text-white px-4 py-2 rounded-lg text-sm hover:bg-slate-800">
-            + Добавить вручную
-        </a>
+           class="bg-slate-900 text-white px-4 py-2 rounded-2xl text-sm font-medium">+ Добавить</a>
         {% endif %}
     </div>
 </div>
 
-<div class="bg-white rounded-xl shadow-sm p-4 mb-6">
-    <form method="get" class="flex gap-3 items-center">
-        <label class="text-sm font-medium">Магазин:</label>
+{% if error %}
+<div class="mb-4 rounded-2xl border border-amber-200 bg-amber-50 text-amber-900 px-4 py-3 text-sm">
+    {{ error }}
+    <div class="mt-2 text-xs text-amber-700">Если нужно снять с продажи при ненулевом остатке — отметьте «Принудительно» в форме удаления.</div>
+</div>
+{% endif %}
+{% if success %}
+<div class="mb-4 rounded-2xl border border-emerald-100 bg-emerald-50 text-emerald-800 px-4 py-3 text-sm">{{ success }}</div>
+{% endif %}
+
+<div class="bg-white rounded-3xl border border-slate-200 shadow-sm p-4 mb-6">
+    <form method="get" class="flex flex-wrap gap-3 items-center">
+        <label class="text-sm font-medium">Магазин</label>
         <select name="store_id" onchange="this.form.submit()"
-                class="border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                class="border border-slate-200 rounded-xl px-3 py-2 text-sm min-w-[180px]">
             <option value="">— выберите —</option>
             {% for s in stores %}
             <option value="{{ s.id }}" {% if store_id == s.id %}selected{% endif %}>{{ s.name }}</option>
@@ -31,67 +40,96 @@
 </div>
 
 {% if store_id %}
-<div class="bg-white rounded-xl shadow-sm p-6 mb-6">
-    <h2 class="font-semibold mb-3">Загрузить / обновить из Excel</h2>
-    <p class="text-sm text-gray-500 mb-4">
-        Система умная: если товар уже есть — обновит цену и остаток. Новые позиции добавит.
-        Скачай шаблон выше, заполни и загрузи.
-    </p>
-    <form method="post" action="/products/import" enctype="multipart/form-data" class="flex gap-3 items-center">
+<div class="bg-white rounded-3xl border border-slate-200 shadow-sm p-5 mb-6">
+    <h2 class="font-semibold mb-2">Excel</h2>
+    <p class="text-sm text-slate-500 mb-3">Существующие позиции обновятся, новые добавятся.</p>
+    <form method="post" action="/products/import" enctype="multipart/form-data" class="flex flex-wrap gap-3 items-center">
         <input type="hidden" name="store_id" value="{{ store_id }}">
         <input type="file" name="file" accept=".xlsx,.xls" required class="text-sm">
-        <button type="submit" class="bg-slate-900 text-white px-4 py-2 rounded-lg text-sm hover:bg-slate-800">
-            Загрузить
-        </button>
+        <button type="submit" class="bg-slate-900 text-white px-4 py-2 rounded-2xl text-sm">Загрузить</button>
     </form>
 </div>
 
-<div class="bg-white rounded-xl shadow-sm overflow-hidden overflow-x-auto">
-    <table class="w-full text-sm">
-        <thead class="bg-gray-50 text-left">
+<div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+    <div class="overflow-x-auto">
+    <table class="w-full text-sm min-w-[800px]">
+        <thead class="bg-slate-50 text-left text-slate-500">
             <tr>
-                <th class="px-4 py-3 font-medium text-gray-600">Категория</th>
-                <th class="px-4 py-3 font-medium text-gray-600">Товар</th>
-                <th class="px-4 py-3 font-medium text-gray-600">Хар. 1</th>
-                <th class="px-4 py-3 font-medium text-gray-600">Хар. 2</th>
-                <th class="px-4 py-3 font-medium text-gray-600">Цена</th>
-                <th class="px-4 py-3 font-medium text-gray-600">Остаток</th>
-                <th class="px-4 py-3 font-medium text-gray-600"></th>
+                <th class="px-4 py-3 font-medium">Категория</th>
+                <th class="px-4 py-3 font-medium">Товар</th>
+                <th class="px-4 py-3 font-medium">Бренд</th>
+                <th class="px-4 py-3 font-medium">Хар.1</th>
+                <th class="px-4 py-3 font-medium">Хар.2</th>
+                <th class="px-4 py-3 font-medium">Цена / остаток</th>
+                <th class="px-4 py-3 font-medium">Удаление</th>
             </tr>
         </thead>
-        <tbody class="divide-y">
+        <tbody class="divide-y divide-slate-100">
             {% for item in items %}
-            <tr class="hover:bg-gray-50">
-                <td class="px-4 py-2 text-gray-500">{{ item.category }}</td>
-                <td class="px-4 py-2 font-medium">{{ item.product_name }}</td>
-                <td class="px-4 py-2">{{ item.strength or '—' }}</td>
-                <td class="px-4 py-2">{{ item.flavor or '—' }}</td>
-                <td class="px-4 py-2" colspan="3">
-                    <form method="post" action="/products/update-variant" class="flex items-center gap-2">
+            <tr class="hover:bg-slate-50/80 align-top">
+                <td class="px-4 py-3 text-slate-500">{{ item.category }}</td>
+                <td class="px-4 py-3 font-medium">{{ item.product_name }}</td>
+                <td class="px-4 py-3 text-slate-600">{{ item.brand or '—' }}</td>
+                <td class="px-4 py-3">{{ item.strength or '—' }}</td>
+                <td class="px-4 py-3">{{ item.flavor or '—' }}</td>
+                <td class="px-4 py-3">
+                    <form method="post" action="/products/update-variant" class="flex flex-wrap items-center gap-2">
                         <input type="hidden" name="variant_id" value="{{ item.variant_id }}">
                         <input type="hidden" name="store_id" value="{{ store_id }}">
                         <input type="number" name="price" value="{{ item.price | int }}" min="0" step="1"
-                               class="w-24 border border-gray-300 rounded px-2 py-1 text-sm">
+                               class="w-24 border border-slate-200 rounded-xl px-2 py-1.5 text-sm">
                         <input type="number" name="stock" value="{{ item.stock }}" min="0" step="1"
-                               class="w-20 border border-gray-300 rounded px-2 py-1 text-sm
-                               {% if item.status == 'out' %}text-red-600 font-medium{% elif item.status == 'low' %}text-yellow-600 font-medium{% else %}text-green-700{% endif %}">
-                        <button type="submit" class="text-blue-600 hover:underline text-sm whitespace-nowrap">Сохранить</button>
+                               class="w-20 border border-slate-200 rounded-xl px-2 py-1.5 text-sm
+                               {% if item.status == 'out' %}text-red-600 font-medium{% elif item.status == 'low' %}text-amber-600 font-medium{% else %}text-emerald-700{% endif %}">
+                        <button type="submit" class="text-indigo-600 hover:underline text-sm">OK</button>
                     </form>
+                </td>
+                <td class="px-4 py-3 space-y-2 min-w-[160px]">
+                    <form method="post" action="/products/delete-variant" class="space-y-1"
+                          onsubmit="return confirm('Снять этот вариант (вкус/крепость) с продажи?');">
+                        <input type="hidden" name="variant_id" value="{{ item.variant_id }}">
+                        <input type="hidden" name="store_id" value="{{ store_id }}">
+                        <label class="flex items-center gap-1.5 text-xs text-slate-500">
+                            <input type="checkbox" name="force" value="1"> принудительно
+                        </label>
+                        <button class="text-xs text-red-500 hover:underline">Удалить вариант</button>
+                    </form>
+                    {% if item.product_id %}
+                    <form method="post" action="/products/delete" class="space-y-1 border-t border-slate-100 pt-2"
+                          onsubmit="return confirm('Снять весь товар «{{ item.product_name }}» в этом магазине?');">
+                        <input type="hidden" name="product_id" value="{{ item.product_id }}">
+                        <input type="hidden" name="scope" value="store">
+                        <label class="flex items-center gap-1.5 text-xs text-slate-500">
+                            <input type="checkbox" name="force" value="1"> принудительно
+                        </label>
+                        <button class="text-xs text-red-600 hover:underline font-medium">Удалить товар</button>
+                    </form>
+                    <form method="post" action="/products/delete" class="space-y-1"
+                          onsubmit="return confirm('Снять этот товар ВО ВСЕХ магазинах?');">
+                        <input type="hidden" name="product_id" value="{{ item.product_id }}">
+                        <input type="hidden" name="scope" value="all">
+                        <label class="flex items-center gap-1.5 text-xs text-slate-500">
+                            <input type="checkbox" name="force" value="1"> принудительно
+                        </label>
+                        <button class="text-xs text-red-700 hover:underline">Во всех магазинах</button>
+                    </form>
+                    {% endif %}
                 </td>
             </tr>
             {% else %}
             <tr>
-                <td colspan="7" class="px-4 py-8 text-center text-gray-400">
-                    Товаров пока нет. Добавьте вручную или загрузите Excel.
+                <td colspan="7" class="px-4 py-10 text-center text-slate-400">
+                    Товаров нет. Добавьте вручную или загрузите Excel.
                 </td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
+    </div>
 </div>
 {% else %}
-<div class="bg-white rounded-xl shadow-sm p-12 text-center text-gray-400">
-    Выберите магазин, чтобы увидеть товары
+<div class="bg-white rounded-3xl border border-slate-200 p-12 text-center text-slate-400">
+    Выберите магазин
 </div>
 {% endif %}
 {% endblock %}

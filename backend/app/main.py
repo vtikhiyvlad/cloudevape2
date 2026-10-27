@@ -544,7 +544,7 @@ async def products_page(
         result = await db.execute(
             select(ProductVariant)
             .join(Product)
-            .where(Product.store_id == store_id, ProductVariant.is_active == True)
+            .where(Product.store_id == store_id, Product.is_active == True, ProductVariant.is_active == True)
             .options(selectinload(ProductVariant.product).selectinload(Product.category))
             .order_by(Product.name)
         )
@@ -557,8 +557,10 @@ async def products_page(
                 status = "low"
             items.append({
                 "variant_id": v.id,
+                "product_id": v.product.id if v.product else None,
                 "category": v.product.category.name if v.product and v.product.category else "",
                 "product_name": v.product.name if v.product else "",
+                "brand": (v.product.brand if v.product else None) or "",
                 "strength": v.strength,
                 "flavor": v.flavor,
                 "price": float(v.price),
@@ -572,6 +574,8 @@ async def products_page(
         "stores": stores_list,
         "store_id": store_id,
         "items": items,
+        "success": request.session.pop("flash_success", None),
+        "error": request.session.pop("flash_error", None),
     })
 
 
@@ -1920,6 +1924,29 @@ async def settings_telegram(
     user.telegram_id = tid
     await db.commit()
     return RedirectResponse("/settings", status_code=303)
+
+
+@app.post("/products/delete-variant")
+async def products_delete_variant(
+    request: Request,
+    variant_id: int = Form(...),
+    store_id: int = Form(...),
+    force: str = Form("0"),
+    db: AsyncSession = Depends(get_db),
+):
+    user = await get_current_web_user(request, db)
+    if not user or user.role not in ("sysadmin", "owner", "admin", "warehouse"):
+        return RedirectResponse("/login", status_code=303)
+    v = await db.get(ProductVariant, variant_id)
+    if not v:
+        return RedirectResponse(f"/products?store_id={store_id}", status_code=303)
+    if v.stock > 0 and force != "1":
+        request.session["flash_error"] = f"На варианте остаток {v.stock} шт. Обнулите или удалите с принудительным снятием."
+        return RedirectResponse(f"/products?store_id={store_id}", status_code=303)
+    v.is_active = False
+    await db.commit()
+    request.session["flash_success"] = "Вариант снят с продажи"
+    return RedirectResponse(f"/products?store_id={store_id}", status_code=303)
 
 
 @app.post("/products/delete")
